@@ -17,7 +17,7 @@ local KoboldMeta = {
 
     -- Used by KiKome.
     NAME    = "KiKome",
-    VERSION = "1",
+    VERSION = "1.0.0",
     REPO    = "https://github.com/lautaroelkin/KiKomeScrubber.koplugin",
     LICENSE = "GPL-3.0",
     -- Developer tools, default state. When on: long-press the clock in the
