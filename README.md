@@ -2,6 +2,27 @@
 
 Based on [Kobold](https://github.com/unitreign/kobold), KiKome is a mix of Kindle and Kobo for KOReader. A calm Home. A library that feels like yours. Everything a little rounder, a little quieter.
 
+
+<table align="center" width="100%">
+  <tr>
+    <td align="center" width="25%" valign="top">
+      <img src="images/Kikome1.jpg" width="100%" alt="Home: List View"/><br>
+      <b>Home: List View</b>
+    </td>
+    <td align="center" width="25%" valign="top">
+      <img src="images/Kikome2.jpg" width="100%" alt="Home: Grid View"/><br>
+      <b>Home: Grid View</b>
+    </td>
+    <td align="center" width="25%" valign="top">
+      <img src="images/Kikome3.jpg" width="100%" alt="Library"/><br>
+      <b>Library</b>
+    </td>
+    <td align="center" width="25%" valign="top">
+      <img src="images/Kikome4.jpg" width="100%" alt="Book Details"/><br>
+      <b>Book Details</b>
+    </td>
+  </tr>
+</table>
 ---
 
 ## Home
