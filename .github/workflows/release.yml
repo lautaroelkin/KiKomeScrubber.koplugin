@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (example: v1.3.1)"
+        description: "Release tag (example: v1.0.0)"
         required: true
 
 permissions:
@@ -24,7 +24,12 @@ jobs:
 
       - name: Check that the version matches the tag
         run: |
-          VERSION=$(grep -oP 'VERSION\s*=\s*"\K[^"]+' _meta.lua | head -1)
+          VERSION=$(grep -oP 'VERSION\s*=\s*"\K[^"]+' _meta.lua | head -1 || true)
+          echo "Tag: $TAG | _meta.lua VERSION: ${VERSION:-<not found>}"
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not find VERSION in _meta.lua."
+            exit 1
+          fi
           if [ "$TAG" != "v$VERSION" ] && [ "$TAG" != "$VERSION" ]; then
             echo "::error::The tag is $TAG but _meta.lua says VERSION = $VERSION. Update _meta.lua, then publish the release again."
             exit 1
@@ -47,11 +52,17 @@ jobs:
       - name: Upload zip to the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$TAG" KiKomeScrubber.koplugin.zip --clobber
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --title "$TAG" --notes ""
+          fi
+          gh release upload "$TAG" KiKomeScrubber.koplugin.zip --clobber
 
       - name: Add installation instructions to the release notes
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           gh release view "$TAG" --json body --jq .body > notes.md
           if ! grep -q "^## Installation" notes.md; then
