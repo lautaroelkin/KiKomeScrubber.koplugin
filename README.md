@@ -23,6 +23,7 @@ Based on [Kobold](https://github.com/unitreign/kobold), KiKome is a mix of Kindl
     </td>
   </tr>
 </table>
+
 ---
 
 ## Home
