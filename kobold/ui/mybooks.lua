@@ -1,33 +1,44 @@
 -- kobold/ui/mybooks.lua — Kobold
 -- My Books screen, laid out like the e-reader's own library: the shared status bar, the
--- Books / Authors / Series / Collections tabs over a light rule, a row of
+-- Books / Authors / Series / Collections / Genres / Files tabs (which of them
+-- are on, and in what order, is set in Settings > Library options > Tabs; see
+-- data/tabs.lua) over a light rule, a row of
 -- pills, then a page of rows (a thin separator under each folder row). Swipe the list
 -- up or down, or use the side bar, to move through the list. Bottom nav is shared with the other
 -- screens.
 --
 -- Views:
---   Books tab         book rows, with Filter and Sort pills
---   other tabs        author / series / collection rows, with a Sort pill
+--   Books tab         book rows; the adjust button opens the View sheet
+--                     (view_sheet.lua, the same as on Home): Grid / List, and
+--                     Sort & Filter (status, sort, A-Z, language)
+--   other tabs        author / series / collection / genre rows; adjust has
+--                     Grid / List and A-Z / Z-A
 --   a tapped group    that group's book rows, with a back pill
 -- A book row opens the book; its "…" opens KOReader's own book menu (status,
 -- delete, and so on), the same menu as a long-press in the file browser.
+-- A long-press on a collection or a folder opens Kobold's own row of options
+-- (book_menu.lua): rename, add books, remove / set as home, delete; renaming
+-- uses rename_prompt.lua and every confirmation uses confirm_sheet.lua.
+--
+-- Split in three files: this one (the screen: layout, tabs, lists, grid, taps,
+-- selection mode, the More menu), mybooks_collections.lua (what collections
+-- can do) and mybooks_files.lua (the Files tab: folders, copy / move / delete).
 
 local Blitbuffer      = require("ffi/blitbuffer")
 local ButtonDialog    = require("ui/widget/buttondialog")
 local CenterContainer = require("ui/widget/container/centercontainer")
-local ConfirmBox      = require("ui/widget/confirmbox")
 local Device          = require("device")
 local FrameContainer  = require("ui/widget/container/framecontainer")
 local Geom            = require("ui/geometry")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan  = require("ui/widget/horizontalspan")
-local InfoMessage     = require("ui/widget/infomessage")
 local InputContainer  = require("ui/widget/container/inputcontainer")
 local InputDialog     = require("ui/widget/inputdialog")
 local LeftContainer   = require("ui/widget/container/leftcontainer")
 local LineWidget      = require("ui/widget/linewidget")
 local OverlapGroup    = require("ui/widget/overlapgroup")
 local OptionSheet     = require("kobold.ui.option_sheet")
+local ViewSheet       = require("kobold.ui.view_sheet")
 local RightContainer  = require("ui/widget/container/rightcontainer")
 local TextBoxWidget   = require("ui/widget/textboxwidget")
 local TextWidget      = require("ui/widget/textwidget")
@@ -38,17 +49,21 @@ local Widget          = require("ui/widget/widget")
 local _               = require("gettext")
 local lfs             = require("libs/libkoreader-lfs")
 local Clipboard       = require("kobold.data.clipboard")
-local FileOps         = require("kobold.data.fileops")
 local KoboldCovers    = require("kobold.data.covers")
 local KoboldPrefs     = require("kobold.data.prefs")
 local KoboldLibrary   = require("kobold.data.library")
 local KoboldMyBooksData = require("kobold.data.mybooks")
+local BookLang        = require("kobold.data.booklang")
+local Genres          = require("kobold.data.genres")
+local KoboldTabs      = require("kobold.data.tabs")
 local KoboldNav       = require("kobold.ui.nav")
+local KoboldMetrics   = require("kobold.ui.metrics")
 local CoverBadge      = require("kobold.ui.cover_badge")
 local KoboldReader    = require("kobold.ui.reader")
 local KoboldTaps      = require("kobold.ui.taps")
 local KoboldWidgets   = require("kobold.ui.widgets")
 local Rounded         = require("kobold.ui.rounded")
+local Toast           = require("kobold.ui.toast")
 
 local Screen = Device.screen
 
@@ -56,48 +71,31 @@ local COVER_RATIO = 1.5  -- height / width of a book cover
 local PAGE_TURNS_PER_FLASH = 10  -- see refreshList
 
 -- Filter and sort choices are kept between sessions under these settings keys.
-local FILTER_KEY     = "kobold_mybooks_filter"
-local SORT_KEY       = "kobold_mybooks_sort"
+local FILTER_KEY     = "kobold_mybooks_filter"      -- status: all / reading / unread / finished
+local SORT_KEY       = "kobold_mybooks_sort"        -- recent / oldest / added_newest / added_oldest
+local ALPHA_KEY      = "kobold_mybooks_alpha"       -- az / za
+local LANG_KEY       = "kobold_mybooks_lang"        -- a language code, e.g. "ES"
 local GROUP_SORT_KEY = "kobold_mybooks_group_sort"
 local VIEW_KEY       = "kobold_mybooks_view"  -- Books tab: "list" or "grid"
 
-local TABS = {
-    { id = "books",       text = _("Books") },
-    { id = "authors",     text = _("Authors") },
-    { id = "series",      text = _("Series") },
-    { id = "collections", text = _("Collections") },
-    { id = "files",       text = _("Files") },
+-- Older versions saved one sort that also held the title order; its new homes.
+local OLD_SORTS = {
+    opened_desc = { sort = "recent" },
+    added_desc  = {},
+    added_asc   = { sort = "added_oldest" },
+    title_asc   = { alpha = "az" },
+    title_desc  = { alpha = "za" },
 }
 
--- Tabs shown: all of them (the Files tab is always on).
+-- Tabs shown: the ones that are on in Settings > Library options > Tabs, in the
+-- order set there. { id, text }
 local function visibleTabs()
     local out = {}
-    for _i, tab in ipairs(TABS) do
-        out[#out + 1] = tab
+    for _i, tab in ipairs(KoboldTabs.enabledList()) do
+        out[#out + 1] = { id = tab.id, text = tab.label }
     end
     return out
 end
-
-local FILTER_LABELS = {
-    all      = _("All"),
-    reading  = _("Reading"),
-    unread   = _("Unread"),
-    finished = _("Finished"),
-}
-
--- pill = short text on the Sort pill, menu = text in the Sort popup.
-local SORT_LABELS = {
-    opened_desc = { pill = _("Recent"),   menu = _("Last opened") },
-    added_desc = { pill = _("Newest"),    menu = _("Date added: newest first") },
-    added_asc  = { pill = _("Oldest"),    menu = _("Date added: oldest first") },
-    title_asc  = { pill = _("Title A–Z"), menu = _("Title: A to Z") },
-    title_desc = { pill = _("Title Z–A"), menu = _("Title: Z to A") },
-}
-
-local GROUP_SORT_LABELS = {
-    name_asc  = { pill = _("A–Z"), menu = _("Name: A to Z") },
-    name_desc = { pill = _("Z–A"), menu = _("Name: Z to A") },
-}
 
 local fileChooser  -- defined with the book menu, used by the Files tab too
 
@@ -127,6 +125,28 @@ local function readChoice(key, valid, default)
         if id == v then return v end
     end
     return default
+end
+
+-- Saves a choice; nil removes it (nothing chosen).
+local function saveChoice(key, value)
+    if not G_reader_settings then return end
+    if value == nil then G_reader_settings:delSetting(key) else G_reader_settings:saveSetting(key, value) end
+end
+
+-- The saved sort and alphabetical order, with the older single sort turned
+-- into the two choices of today.
+local function loadSort()
+    local stored = G_reader_settings and G_reader_settings:readSetting(SORT_KEY)
+    local alpha = readChoice(ALPHA_KEY, { "az", "za" }, nil)
+    local old = OLD_SORTS[stored]
+    if old then
+        local sort = old.sort
+        alpha = old.alpha or alpha
+        saveChoice(SORT_KEY, sort)
+        saveChoice(ALPHA_KEY, alpha)
+        return sort, alpha
+    end
+    return readChoice(SORT_KEY, KoboldMyBooksData.VIEW_SORTS, nil), alpha
 end
 
 local function countText(n)
@@ -196,18 +216,24 @@ function KoboldMyBooks:layoutRows()
     -- the nav bar. A book cell is just its cover: the read badge and the "..."
     -- button sit on top of it. A series cell has its name and book count
     -- under the cover.
-    L.grid_cols   = 4
     L.grid_gap_x  = Screen:scaleBySize(18)
     L.grid_gap_y  = Screen:scaleBySize(14)
     -- Room kept free under the grid, so the covers do not sit right on the
     -- nav bar. (The nav's mini cover sticks up about 36 px over the bar; the
     -- old page footer kept 40 px free. Raise this to clear it completely.)
     L.grid_bottom_gap = Screen:scaleBySize(24)
-    L.grid_cell_w = math.floor((L.content_w - (L.grid_cols - 1) * L.grid_gap_x) / L.grid_cols)
     L.grid_text_gap = Screen:scaleBySize(6)
     L.grid_status_h = TextWidget:new{ text = "Ag", face = KoboldWidgets.face(14) }:getSize().h
     L.grid_dots_h = TextWidget:new{ text = "…", face = KoboldWidgets.face(18), bold = true }:getSize().h
     L.grid_h      = L.list_h - L.grid_bottom_gap
+    -- Columns: as many covers as the width allows, but with the height of the
+    -- tallest cell (a group card, with its name and count under the cover) in
+    -- mind, so that at least two rows always fit. Portrait e-readers get 4, a
+    -- big screen or landscape gets more. The same columns serve books and
+    -- groups, so the grid does not jump when you change tab.
+    L.grid_cols   = KoboldMetrics.gridCols(L.content_w, L.grid_gap_x, L.grid_h, L.grid_gap_y,
+        L.grid_text_gap + L.grid_status_h + L.grid_dots_h, 0)
+    L.grid_cell_w = math.floor((L.content_w - (L.grid_cols - 1) * L.grid_gap_x) / L.grid_cols)
     -- Cover height, cell height, rows and cells per page for a cell with
     -- `text_h` of text under its cover (0: just the cover).
     local function gridSet(text_h)
@@ -245,12 +271,44 @@ function KoboldMyBooks:layoutRows()
             rows = 2
             cover_h = math.floor((L.grid_h - gap) / 2) - extra
         end
-        cover_h = math.max(math.floor(L.grid_cell_w * 0.5), cover_h)
+        -- A floor for very short screens, but never one that pushes the last
+        -- row under the nav bar: it stops at what MIN_ROWS rows can hold.
+        local min_rows = KoboldMetrics.MIN_ROWS
+        local room_h = math.floor((L.grid_h - (min_rows - 1) * gap) / min_rows) - extra
+        local floor_h = math.max(1, math.min(math.floor(L.grid_cell_w * 0.5), room_h))
+        cover_h = math.max(floor_h, cover_h)
         local cell_h = cover_h + extra
         return { cover_h = cover_h, cell_h = cell_h, rows = rows, per_page = L.grid_cols * rows }
     end
     L.grid_books  = gridSet(0)
     L.grid_groups = gridSet(L.grid_status_h + L.grid_dots_h)
+    -- The covers are often narrower than their cell: the rows have to fit the
+    -- height, so the cover shrinks (it keeps its shape) and the width it frees
+    -- would only be empty space between the books. Work the columns out again
+    -- from the width the covers really have, so more of them fit across (a few
+    -- passes at most: each pass can only add columns).
+    local base_gap_x = L.grid_gap_x
+    local max_cols = L.grid_cols * 2
+    for _pass = 1, 3 do
+        local cw = math.floor(L.grid_books.cover_h / COVER_RATIO)
+        if cw >= L.grid_cell_w * 0.92 then break end
+        local cols = math.min(max_cols, (KoboldMetrics.fitRow(L.content_w, base_gap_x, cw, L.grid_cols)))
+        if cols <= L.grid_cols then break end
+        L.grid_cols   = cols
+        L.grid_cell_w = math.floor((L.content_w - (cols - 1) * base_gap_x) / cols)
+        L.grid_books  = gridSet(0)
+        L.grid_groups = gridSet(L.grid_status_h + L.grid_dots_h)
+    end
+    -- What is left over goes between the covers (cells as wide as the covers
+    -- are), so a row still spans the whole width, with the first cover at the
+    -- left edge and the last one at the right edge.
+    do
+        local cw = math.min(L.grid_cell_w, math.floor(L.grid_books.cover_h / COVER_RATIO))
+        if L.grid_cols > 1 and cw >= 1 and cw < L.grid_cell_w then
+            L.grid_cell_w = cw
+            L.grid_gap_x = math.max(base_gap_x, math.floor((L.content_w - L.grid_cols * cw) / (L.grid_cols - 1)))
+        end
+    end
     L.grid_cover_h, L.grid_cell_h = L.grid_books.cover_h, L.grid_books.cell_h
     L.grid_rows, L.grid_per_page = L.grid_books.rows, L.grid_books.per_page
     L.y_grid_end  = L.y_list + L.grid_h
@@ -291,23 +349,43 @@ function KoboldMyBooks:init()
         }
     end
 
-    self.tab        = "books"
-    self.group      = nil  -- the author / series / collection being shown
+    self.tab        = KoboldTabs.first()
+    self.group      = nil  -- the author / series / collection / genre being shown
     self.filter     = readChoice(FILTER_KEY, KoboldMyBooksData.FILTERS, "all")
-    self.sort       = readChoice(SORT_KEY, KoboldMyBooksData.SORTS, "added_desc")
+    self.sort, self.alpha = loadSort()
+    local lang = G_reader_settings and G_reader_settings:readSetting(LANG_KEY)
+    self.lang       = (type(lang) == "string" and lang ~= "") and lang or nil
     self.group_sort = readChoice(GROUP_SORT_KEY, KoboldMyBooksData.GROUP_SORTS, "name_asc")
     self.view       = readChoice(VIEW_KEY, { "list", "grid" }, "list")
     self.page       = 1
     self.books      = KoboldMyBooksData.getBooks()
 
+    self:setupLayout()
+
+    Clipboard.exitSelect()
+    self:hookFileManager()
+    self:restoreState(self.restore)
+    self:applyList()
+    self[1] = self:build()
+    self:ensureCovers()
+end
+
+-- Everything that depends on the size of the screen: the bands, the rows or
+-- grid, and the tap zones (they sit at fixed places). Runs when the screen is
+-- made and again, in place, when the screen is rotated (see relayout).
+function KoboldMyBooks:setupLayout()
+    local W, H = Screen:getWidth(), Screen:getHeight()
+    self.dimen.w, self.dimen.h = W, H
+
     -- Fixed layout. Every band has a set height except the list, which takes
     -- what is left between the pills and the bottom nav.
-    local margin = Screen:scaleBySize(30)
+    local bar = KoboldMetrics.statusBar()
+    local margin = bar.margin
     local L = {
         W = W, H = H,
         margin     = margin,
         content_w  = W - 2 * margin,
-        status_h   = Screen:scaleBySize(40),
+        status_h   = bar.h,
         tabs_gap   = Screen:scaleBySize(12),
         tabs_h     = Screen:scaleBySize(40),
         tab_bar_h  = Screen:scaleBySize(3),   -- black bar under the selected tab
@@ -395,10 +473,26 @@ function KoboldMyBooks:init()
             end,
         },
     })
+    -- Touch the side bar and slide the finger: the bar and the page follow it.
+    -- Registered after the list hold and swipe zones so it is asked first. Not in grid view,
+    -- where this strip is part of the grid.
+    KoboldWidgets.registerBarDrag(self, {
+        rect = function()
+            if self:isGrid() then return nil end
+            return Geom:new{ x = split_x, y = L.y_list, w = W - split_x, h = L.list_h }
+        end,
+        bar  = function() return self:barOpts() end,
+        top  = function() return L.y_list + L.bar_inset end,
+        goTo = function(page) self:goToPage(page) end,
+    })
+end
 
-    Clipboard.exitSelect()
-    self:hookFileManager()
-    self:restoreState(self.restore)
+-- The screen was rotated or resized: lay it out again at the new size and
+-- build the page. The first item on screen stays on screen.
+function KoboldMyBooks:relayout()
+    local first = (self.page - 1) * self:perPage()
+    self:setupLayout()
+    self.page = math.floor(first / math.max(1, self:perPage())) + 1
     self:applyList()
     self[1] = self:build()
     self:ensureCovers()
@@ -462,10 +556,11 @@ function KoboldMyBooks:useGridSet()
     L.grid_rows, L.grid_per_page = set.rows, set.per_page
 end
 
--- True when grid view is chosen, on every tab but Files. On Authors, Series
--- and Collections it covers both the list of groups and the books of one.
+-- True when grid view is chosen (on every tab, Files too). On Authors, Series
+-- and Collections it covers both the list of groups and the books of one; on
+-- Files, the folders (a grey tile with a folder) and the books.
 function KoboldMyBooks:isGrid()
-    return self.view == "grid" and self.tab ~= "files"
+    return self.view == "grid"
 end
 
 -- Recomputes the list for the current view and clamps the page to it.
@@ -474,7 +569,8 @@ function KoboldMyBooks:applyList()
         self.list = self:listFolder(self:currentFolder())
     elseif self.tab == "books" then
         local list = KoboldMyBooksData.filter(self.books, self.filter)
-        self.list = KoboldMyBooksData.sort(list, self.sort)
+        list = KoboldMyBooksData.byLanguage(list, self.lang)
+        self.list = KoboldMyBooksData.arrange(list, self.sort, self.alpha)
     elseif self.group then
         self.list = self.group.books
     else
@@ -507,11 +603,16 @@ function KoboldMyBooks:build()
         width = L.W, bordersize = 0, padding = L.margin, padding_bottom = 0,
         VerticalGroup:new{
             align = "left",
-            KoboldWidgets.statusBarFrame(self, L.margin, L.content_w, L.status_h),
+            KoboldWidgets.sharedStatusBar(self),
             VerticalSpan:new{ width = L.tabs_gap },
             self:buildTabs(),
             VerticalSpan:new{ width = L.pills_gap },
-            self:buildPills(),
+            -- Always pills_h tall, also with no pills (only icons on the right),
+            -- so the list keeps its place under it.
+            LeftContainer:new{
+                dimen = Geom:new{ w = L.content_w, h = L.pills_h },
+                self:buildPills(),
+            },
             VerticalSpan:new{ width = L.list_gap },
             self:isGrid() and VerticalGroup:new{
                 align = "left",
@@ -589,11 +690,33 @@ function KoboldMyBooks:buildTabs()
     local row = HorizontalGroup:new{}
     local x = L.margin
     self.tab_hits = {}
-    for i, tab in ipairs(visibleTabs()) do
+    local tabs = visibleTabs()
+    -- With many tabs on a narrow screen they would run off the edge: the gap
+    -- between them shrinks first, then the letters.
+    local font_size, tab_gap = 17, L.tab_gap
+    local function widths(size)
+        local total = 0
+        for _i, tab in ipairs(tabs) do
+            local t = TextWidget:new{ text = tab.text, face = KoboldWidgets.face(size), bold = true }
+            total = total + t:getSize().w
+            t:free()
+        end
+        return total
+    end
+    local min_gap = Screen:scaleBySize(10)
+    local text_total = widths(font_size)
+    if #tabs > 1 and text_total + min_gap * (#tabs - 1) > L.content_w then
+        font_size = 15
+        text_total = widths(font_size)
+    end
+    if #tabs > 1 then
+        tab_gap = math.max(min_gap, math.min(L.tab_gap, math.floor((L.content_w - text_total) / (#tabs - 1))))
+    end
+    for i, tab in ipairs(tabs) do
         local selected = tab.id == self.tab
-        local text = TextWidget:new{ text = tab.text, face = KoboldWidgets.face(17), bold = selected }
+        local text = TextWidget:new{ text = tab.text, face = KoboldWidgets.face(font_size), bold = selected }
         local w = text:getSize().w
-        if i > 1 then row[#row + 1] = HorizontalSpan:new{ width = L.tab_gap } end
+        if i > 1 then row[#row + 1] = HorizontalSpan:new{ width = tab_gap } end
         row[#row + 1] = VerticalGroup:new{
             align = "left",
             CenterContainer:new{
@@ -606,9 +729,9 @@ function KoboldMyBooks:buildTabs()
             } or VerticalSpan:new{ width = L.tab_bar_h },
         }
         -- Tap area reaches halfway into the gaps on both sides.
-        local half = math.floor(L.tab_gap / 2)
+        local half = math.floor(tab_gap / 2)
         self.tab_hits[i] = Geom:new{ x = x - half, y = L.y_tabs, w = w + 2 * half, h = L.tabs_h }
-        x = x + w + L.tab_gap
+        x = x + w + tab_gap
     end
     return OverlapGroup:new{
         dimen = Geom:new{ w = L.content_w, h = L.tabs_h },
@@ -666,19 +789,17 @@ function KoboldMyBooks:buildPills()
             specs = { { label = name, back = true, action = function() self:openFolder(self:parentFolder()) end } }
         end
     elseif self.tab == "books" then
-        specs = {
-            { label = _("Filter: ") .. FILTER_LABELS[self.filter], action = function() self:showFilterDialog() end },
-            { label = _("Sort: ") .. SORT_LABELS[self.sort].pill, action = function() self:showSortDialog() end },
-        }
+        specs = {}  -- Status, sort, A-Z and language live in the adjust sheet
     elseif self.group then
         specs = { {
             label = self.group.name, back = true,
             action = function() self:closeGroup() end,
         } }
+    elseif self.tab == "collections" then
+        -- Where the Filter / Sort pills were: a grey pill to make a collection.
+        specs = { { label = _("Add collection"), add = true, action = function() self:newCollection() end } }
     else
-        specs = {
-            { label = _("Sort: ") .. GROUP_SORT_LABELS[self.group_sort].pill, action = function() self:showGroupSortDialog() end },
-        }
+        specs = {}  -- A-Z / Z-A lives in the adjust sheet
     end
 
     local row = HorizontalGroup:new{ align = "center" }
@@ -690,12 +811,13 @@ function KoboldMyBooks:buildPills()
             pill, w = self:buildPill(spec.label,
                 KoboldWidgets.icon("home", icon_size, { fallback = "appbar.filebrowser" }), true,
                 L.content_w - 2 * L.pill_pad - icon_size - Screen:scaleBySize(6))
+        elseif spec.add then
+            pill, w = self:buildPill(spec.label,
+                OptionSheet.iconWidget("plus", icon_size, Blitbuffer.COLOR_BLACK), true)
         elseif spec.back then
             -- Back pill: left chevron and the group's name, cut to fit.
             local max_text = L.content_w - 2 * L.pill_pad - icon_size - Screen:scaleBySize(6)
-            if self.tab ~= "files" or self:selecting() then
-                max_text = max_text - Screen:scaleBySize(40) - 3 * L.pill_gap
-            end
+            max_text = max_text - Screen:scaleBySize(40) - 3 * L.pill_gap
             if self.tab == "collections" then   -- and room for the plus
                 max_text = max_text - Screen:scaleBySize(26) - Screen:scaleBySize(18)
             end
@@ -710,9 +832,8 @@ function KoboldMyBooks:buildPills()
         x = x + w + L.pill_gap
     end
 
-    -- Right end: the adjust icon (list or grid view) on every tab but Files,
-    -- and on Collections a plus after it. The plus creates a new collection on
-    -- the list; inside a collection it adds books to it. The "more" button
+    -- Right end: inside a collection a plus that adds books to it, then the
+    -- adjust icon (view, sort & filter) on every tab (on Files only the view). The "more" button
     -- (three dots) always comes last: on Files it opens a small menu (Select,
     -- Paste here, Settings); elsewhere it goes straight to Kobold Settings.
     -- In selection mode both are replaced by the actions button and a close X.
@@ -731,20 +852,20 @@ function KoboldMyBooks:buildPills()
             action = function() self:exitSelect() end,
         }
     end
-    if not selecting and self.tab ~= "files" then
+    if not selecting and self.tab == "collections" and self.group then
+        -- Inside a collection the plus adds books to it (on the list of
+        -- collections, the Add collection pill makes a new one).
+        local plus_size = Screen:scaleBySize(26)
+        items[#items + 1] = {
+            widget = OptionSheet.iconWidget("plus", plus_size, Blitbuffer.COLOR_BLACK), width = plus_size,
+            action = function() self:addBookToCollection() end,
+        }
+    end
+    if not selecting then
         local dots = OptionSheet.iconWidget("adjust", Screen:scaleBySize(26), Blitbuffer.COLOR_BLACK)
         items[#items + 1] = {
             widget = dots, width = dots:getSize().w,
             action = function() self:showViewDialog() end,
-        }
-    end
-    if not selecting and self.tab == "collections" then
-        local plus_size = Screen:scaleBySize(26)
-        items[#items + 1] = {
-            widget = OptionSheet.iconWidget("plus", plus_size, Blitbuffer.COLOR_BLACK), width = plus_size,
-            action = function()
-                if self.group then self:addBookToCollection() else self:newCollection() end
-            end,
         }
     end
     if not selecting then
@@ -766,7 +887,7 @@ function KoboldMyBooks:buildPills()
         -- Width of the pills so far, from the loop above. Not row:getSize():
         -- that would fix the group's layout before the icons are added, and
         -- painting the unlaid-out icons crashes KOReader.
-        local used = x - L.margin - L.pill_gap
+        local used = (#specs > 0) and (x - L.margin - L.pill_gap) or 0
         row[#row + 1] = HorizontalSpan:new{ width = math.max(0, L.content_w - used - total - inset) }
         local cx = L.margin + L.content_w - inset - total
         local half = math.floor(between / 2)
@@ -788,62 +909,6 @@ function KoboldMyBooks:buildPills()
     return row
 end
 
--- New collection: asks for a name, like KOReader's own "New collection",
--- creates it in KOReader's collections, then opens it here (empty; books are
--- added from a book's "..." menu, Add to collection).
-function KoboldMyBooks:newCollection()
-    local ok_rc, ReadCollection = pcall(require, "readcollection")
-    if not ok_rc or not ReadCollection or not ReadCollection.addCollection then
-        UIManager:show(InfoMessage:new{ text = _("KOReader's collections are not available.") })
-        return
-    end
-    local dialog
-    dialog = InputDialog:new{
-        title = _("New collection"),
-        input_hint = _("Collection name"),
-        buttons = {{
-            {
-                text = _("Cancel"),
-                id = "close",
-                callback = function() UIManager:close(dialog) end,
-            },
-            {
-                text = _("Create"),
-                is_enter_default = true,
-                callback = function()
-                    local name = (dialog:getInputText() or ""):match("^%s*(.-)%s*$")
-                    if name == "" then return end
-                    if ReadCollection.coll and ReadCollection.coll[name] then
-                        UIManager:show(InfoMessage:new{
-                            text = _("A collection with that name already exists."),
-                            timeout = 3,
-                        })
-                        return
-                    end
-                    UIManager:close(dialog)
-                    local ok = pcall(function()
-                        ReadCollection:addCollection(name)
-                        ReadCollection:write()
-                    end)
-                    if not ok then
-                        UIManager:show(InfoMessage:new{ text = _("The collection could not be created.") })
-                        return
-                    end
-                    self:openCollection(name)
-                end,
-            },
-        }},
-    }
-    UIManager:show(dialog)
-    dialog:onShowKeyboard()
-end
-
-local function readCollection()
-    local ok, ReadCollection = pcall(require, "readcollection")
-    if ok and ReadCollection and ReadCollection.coll then return ReadCollection end
-    return nil
-end
-
 -- Item under `pos` in the list, or nil (same rows as onListTap).
 function KoboldMyBooks:itemAt(pos)
     local _n, slot_h = self:rowSize()
@@ -857,198 +922,36 @@ function KoboldMyBooks:onListHold(pos)
     if pos.x >= self.L.x_bar - math.floor(self.L.bar_gap / 2) then return end  -- the side bar
     local item = self:itemAt(pos)
     if not item then return end
+    if self:selecting() then
+        -- Selection mode (Files or inside a collection): a hold ticks the book too.
+        if not item.is_dir and item.file then self:toggleSelect(item.file) end
+        return
+    end
     if self.tab == "files" then
-        if self:selecting() then
-            if not item.is_dir and item.file then self:toggleSelect(item.file) end
-        elseif item.is_dir then
-            self:showFolderMenu(item.path)
+        if item.is_dir then
+            self:showFolderMenu(item.path, self:rowRect(pos), "side")
         else
             self:openBookMenu(item.file, self:rowRect(pos), "side", item)
         end
     elseif self.tab == "collections" and not self.group then
-        self:showCollectionOptions(item)
+        self:showCollectionOptions(item, self:rowRect(pos), "side")
     elseif not self:showsGroups() and item.file then
         -- a book row: the same menu as its "..."
         self:openBookMenu(item.file, self:rowRect(pos), "side", item)
     end
 end
 
--- Options for one collection, like KOReader's long-press menu on its
--- collections screen: set as default, rename, remove. KOReader's built-in
--- Favorites cannot be renamed or removed, as in KOReader.
-function KoboldMyBooks:showCollectionOptions(group)
-    local RC = readCollection()
-    if not RC then return end
-    local name = group.key
-    local is_default = RC.coll_default == name
-    local dialog
-    local buttons = {
-        {{
-            text = is_default and _("Reset default") or _("Set default"),
-            callback = function()
-                UIManager:close(dialog)
-                self:toggleDefaultCollection(name)
-            end,
-        }},
-    }
-    if name ~= RC.default_collection_name then
-        buttons[#buttons + 1] = {
-            {
-                text = _("Remove collection"),
-                callback = function()
-                    UIManager:close(dialog)
-                    self:confirmRemoveCollection(group)
-                end,
-            },
-            {
-                text = _("Rename collection"),
-                callback = function()
-                    UIManager:close(dialog)
-                    self:renameCollection(group)
-                end,
-            },
-        }
-    end
-    dialog = ButtonDialog:new{
-        title = group.name,
-        title_align = "center",
-        buttons = buttons,
-    }
-    UIManager:show(dialog)
-end
+-- Selection mode and the clipboard --------------------------------------
+-- Selection mode exists on the Files tab (copy / move / delete) and inside an
+-- open collection (remove from the collection). The clipboard itself is only
+-- used by Files.
 
--- Saves KOReader's collections file. KOReader itself only writes it when its
--- collections screen closes, so changes made here are written right away.
-local function saveCollections(RC, names)
-    pcall(function() RC:write(names) end)
+function KoboldMyBooks:inCollection()
+    return self.tab == "collections" and self.group ~= nil
 end
-
--- The default collection is the one KOReader suggests when adding books.
-function KoboldMyBooks:toggleDefaultCollection(name)
-    local RC = readCollection()
-    if not RC then return end
-    local settings = RC.coll_settings[name]
-    if not settings then return end
-    local updated = { [name] = true }
-    if RC.coll_default == name then
-        RC.coll_default = nil
-        settings.default = nil
-    else
-        local old = RC.coll_default
-        if old and RC.coll_settings[old] then
-            RC.coll_settings[old].default = nil
-            updated[old] = true
-        end
-        RC.coll_default = name
-        settings.default = true
-    end
-    saveCollections(RC, updated)
-end
-
-function KoboldMyBooks:renameCollection(group)
-    local RC = readCollection()
-    if not RC then return end
-    local old = group.key
-    local dialog
-    dialog = InputDialog:new{
-        title = _("Rename collection"),
-        input = old,
-        input_hint = old,
-        buttons = {{
-            {
-                text = _("Cancel"),
-                id = "close",
-                callback = function() UIManager:close(dialog) end,
-            },
-            {
-                text = _("Save"),
-                is_enter_default = true,
-                callback = function()
-                    local new = (dialog:getInputText() or ""):match("^%s*(.-)%s*$")
-                    if new == "" or new == old then return end
-                    if RC.coll[new] then
-                        UIManager:show(InfoMessage:new{
-                            text = _("A collection with that name already exists."),
-                            timeout = 3,
-                        })
-                        return
-                    end
-                    UIManager:close(dialog)
-                    RC:renameCollection(old, new)
-                    saveCollections(RC, nil)  -- also drops the old name from the file
-                    self:scheduleReload()
-                end,
-            },
-        }},
-    }
-    UIManager:show(dialog)
-    dialog:onShowKeyboard()
-end
-
-function KoboldMyBooks:confirmRemoveCollection(group)
-    local RC = readCollection()
-    if not RC then return end
-    UIManager:show(ConfirmBox:new{
-        text = _("Remove collection?") .. "\n\n" .. group.name
-            .. "\n\n" .. _("The books stay in your library."),
-        ok_text = _("Remove"),
-        ok_callback = function()
-            RC:removeCollection(group.key)
-            saveCollections(RC, nil)
-            self:scheduleReload()
-        end,
-    })
-end
-
--- Inside a collection, the plus adds a book: KOReader's file picker, the
--- same one its own "Add a book to collection" uses.
-function KoboldMyBooks:addBookToCollection()
-    local RC = readCollection()
-    local group = self.group
-    local name = group and group.key
-    if not RC or not name or not RC.coll[name] then return end
-    -- Every library book not in the collection yet, by title.
-    local books = {}
-    for _i, b in ipairs(self.books) do
-        if not RC.coll[name][b.file] then books[#books + 1] = b end
-    end
-    books = KoboldMyBooksData.sort(books, "title_asc")
-    require("kobold.ui.book_picker").show{
-        title = group.name,
-        books = books,
-        on_add = function(picked)
-            local ok = pcall(function()
-                RC:addItemsMultiple(picked, { [name] = true })
-                RC:write({ [name] = true })
-            end)
-            if not ok then
-                UIManager:show(InfoMessage:new{ text = _("The books could not be added.") })
-            end
-            self:scheduleReload()
-        end,
-    }
-end
-
--- The "..." of a book inside a collection removes it from the collection
--- (the book itself is not touched).
-function KoboldMyBooks:confirmRemoveFromCollection(item)
-    local RC = readCollection()
-    local name = self.group and self.group.key
-    if not RC or not name then return end
-    UIManager:show(ConfirmBox:new{
-        text = _("Remove from this collection?") .. "\n\n" .. item.title,
-        ok_text = _("Remove"),
-        ok_callback = function()
-            RC:removeItem(item.file, name)  -- writes the collections file
-            self:scheduleReload()
-        end,
-    })
-end
-
--- Selection mode and the clipboard (Files tab) --------------------------
 
 function KoboldMyBooks:selecting()
-    return self.tab == "files" and Clipboard.isSelecting()
+    return (self.tab == "files" or self:inCollection()) and Clipboard.isSelecting()
 end
 
 function KoboldMyBooks:toggleSelect(file)
@@ -1061,53 +964,46 @@ function KoboldMyBooks:exitSelect()
     self:refresh()
 end
 
--- A small message that goes away by itself.
-local function toast(text)
-    UIManager:show(InfoMessage:new{ text = text, timeout = 3 })
-end
-
--- Menu of the actions button in selection mode: put the selection on the
--- clipboard to copy or move it, or select every book of this folder.
-function KoboldMyBooks:showSelectionMenu(rect)
-    local n = Clipboard.count()
-    local function put(mode)
-        if n == 0 then
-            toast(_("Select at least one book first."))
-            return
-        end
-        Clipboard.put(Clipboard.selected(), mode)
-        Clipboard.exitSelect()
-        self:refresh()
-        toast(mode == "cut"
-            and string.format(_("%s ready to move. Open the destination folder, then More > Paste here."), countText(n))
-            or string.format(_("%s ready to copy. Open the destination folder, then More > Paste here."), countText(n)))
-    end
-    local items = {
-            { text = string.format(_("Copy (%d)"), n), icon = { "copy", "square-plus" },
-              action = function() put("copy") end },
-            { text = string.format(_("Move (%d)"), n), icon = { "scissors", "square-arrow-right-enter" },
-              action = function() put("cut") end },
-            { text = _("Select all"), icon = { "list-checks", "square-dot" },
-              action = function()
-                  for _i, it in ipairs(self.list) do
-                      if not it.is_dir and it.file then Clipboard.add(it.file) end
-                  end
-                  self:refreshList()
-              end },
-    }
-    if n > 0 then
-        items[#items + 1] = { text = string.format(_("Delete (%d)"), n), icon = { "trash-2" },
-            action = function() self:confirmDelete() end }
-    end
-    require("kobold.ui.book_menu").show{ screen = self, anchor = rect, align = "right", items = items }
+-- Refresh library (More menu): the library is scanned from the disk again and
+-- everything Kobold remembered about the books (titles, authors, languages,
+-- genres, KOReader's own metadata changes) is forgotten and read anew. The
+-- same as when KOReader announces a metadata change, done by hand.
+function KoboldMyBooks:refreshLibrary()
+    local working = Toast.working(_("Refreshing…"))
+    KoboldLibrary.forgetAll()
+    self:reload()   -- scans the disk again and redraws (the open group stays open)
+    Toast.dismiss(working)
+    Toast.show(_("Library refreshed."))
 end
 
 -- The More button. On Files it opens a menu with Select, Paste here (when
--- the clipboard holds something) and, last, Settings; on the other tabs
--- there is nothing above Settings yet, so it goes straight there.
+-- the clipboard holds something) and, last, Settings; inside a collection,
+-- Select and Settings; on the other tabs, Refresh library and Settings.
 function KoboldMyBooks:openMoreMenu(rect)
     local function settings() require("kobold.ui.settings").show() end
-    if self.tab ~= "files" then return settings() end
+    if self:inCollection() then
+        -- Inside a collection: Select (to remove several books at once), Settings.
+        local items = {
+            { text = _("Select"), icon = { "crop", "square-dot" },
+              action = function()
+                  Clipboard.enterSelect()
+                  self:refresh()
+              end },
+            { text = _("Settings"), icon = { "settings", "settings-2" }, action = settings },
+        }
+        require("kobold.ui.book_menu").show{ screen = self, anchor = rect, align = "right", items = items }
+        return
+    end
+    if self.tab ~= "files" then
+        -- Books, Authors, Series, Genres and the list of collections.
+        local items = {
+            { text = _("Refresh library"), icon = { "refresh-cw", "undo" },
+              action = function() self:refreshLibrary() end },
+            { text = _("Settings"), icon = { "settings", "settings-2" }, action = settings },
+        }
+        require("kobold.ui.book_menu").show{ screen = self, anchor = rect, align = "right", items = items }
+        return
+    end
     local items = {}
     -- Select only exists while the clipboard is empty: with a pending copy /
     -- move, clear it (or paste) first.
@@ -1134,160 +1030,10 @@ function KoboldMyBooks:openMoreMenu(rect)
     require("kobold.ui.book_menu").show{ screen = self, anchor = rect, align = "right", items = items }
 end
 
--- Why books were left out of a paste, one short line.
-local function skippedText(plan_or_summary)
-    local s = plan_or_summary.skipped or {}
-    local parts = {}
-    local there = (s.same_dir or 0) + (s.exists or 0)
-    if there > 0 then parts[#parts + 1] = string.format(_("%d already there"), there) end
-    if (s.in_use or 0) > 0 then parts[#parts + 1] = string.format(_("%d open now"), s.in_use) end
-    if (s.missing or 0) > 0 then parts[#parts + 1] = string.format(_("%d not found"), s.missing) end
-    if (s.bad_dest or 0) > 0 then parts[#parts + 1] = _("folder not found") end
-    return table.concat(parts, ", ")
-end
-
--- Pastes the clipboard into the folder that is open.
-function KoboldMyBooks:pasteHere()
-    local board = Clipboard.board()
-    if not board then return end
-    local dest = self:currentFolder()
-    local plan = FileOps.plan(board.paths, dest, board.mode)
-    if #plan.moves == 0 then
-        local why = skippedText(plan)
-        UIManager:show(InfoMessage:new{
-            text = _("Nothing to paste here.") .. (why ~= "" and ("\n" .. why) or ""),
-        })
-        return
-    end
-    local folder = dest:match("([^/]+)/*$") or dest
-    local verb = board.mode == "cut" and _("Move") or _("Copy")
-    local text = string.format(_("%s %s to \"%s\"?"), verb, countText(#plan.moves), folder)
-    local why = skippedText(plan)
-    if why ~= "" then text = text .. "\n\n" .. _("Left out: ") .. why end
-    UIManager:show(ConfirmBox:new{
-        text = text,
-        ok_text = verb,
-        ok_callback = function() self:runPaste(plan, board.mode) end,
-    })
-end
-
-function KoboldMyBooks:runPaste(plan, mode)
-    local working = InfoMessage:new{ text = _("Working…") }
-    UIManager:show(working)
-    UIManager:forceRePaint()
-    local summary = FileOps.run(plan, mode)
-    UIManager:close(working)
-    Clipboard.clear()
-    local lines = {
-        string.format(mode == "cut" and _("%s moved.") or _("%s copied."), countText(summary.done)),
-    }
-    if summary.failed > 0 then lines[#lines + 1] = string.format(_("%d failed."), summary.failed) end
-    local why = skippedText(summary)
-    if why ~= "" then lines[#lines + 1] = _("Left out: ") .. why end
-    UIManager:show(InfoMessage:new{ text = table.concat(lines, "\n"), timeout = 4 })
-    self:reload()
-end
-
--- Asks before deleting the selected books.
-function KoboldMyBooks:confirmDelete()
-    local paths = Clipboard.selected()
-    if #paths == 0 then return end
-    local plan = FileOps.planDelete(paths)
-    if #plan.files == 0 then
-        local why = skippedText(plan)
-        UIManager:show(InfoMessage:new{
-            text = _("Nothing to delete.") .. (why ~= "" and ("\n" .. why) or ""),
-        })
-        return
-    end
-    local text = string.format(_("Delete %s? Their reading progress, history and collections go too. This cannot be undone."),
-        countText(#plan.files))
-    local why = skippedText(plan)
-    if why ~= "" then text = text .. "\n\n" .. _("Left out: ") .. why end
-    UIManager:show(ConfirmBox:new{
-        text = text,
-        ok_text = _("Delete"),
-        ok_callback = function() self:runDelete(plan) end,
-    })
-end
-
-function KoboldMyBooks:runDelete(plan)
-    local working = InfoMessage:new{ text = _("Working…") }
-    UIManager:show(working)
-    UIManager:forceRePaint()
-    local summary = FileOps.delete(plan)
-    UIManager:close(working)
-    Clipboard.exitSelect()
-    local lines = { string.format(_("%s deleted."), countText(summary.done)) }
-    if summary.failed > 0 then lines[#lines + 1] = string.format(_("%d failed."), summary.failed) end
-    local why = skippedText(summary)
-    if why ~= "" then lines[#lines + 1] = _("Left out: ") .. why end
-    UIManager:show(InfoMessage:new{ text = table.concat(lines, "\n"), timeout = 4 })
-    self:reload()
-end
-
--- New folder: asks for a name and creates it inside the folder that is open.
-function KoboldMyBooks:newFolder()
-    local parent = self:currentFolder()
-    local dialog
-    dialog = InputDialog:new{
-        title = _("New folder"),
-        input_hint = _("Folder name"),
-        buttons = {{
-            {
-                text = _("Cancel"),
-                id = "close",
-                callback = function() UIManager:close(dialog) end,
-            },
-            {
-                text = _("Create"),
-                is_enter_default = true,
-                callback = function()
-                    local name = (dialog:getInputText() or ""):match("^%s*(.-)%s*$")
-                    if name == "" then return end
-                    if name:find("/", 1, true) or name == "." or name == ".." then
-                        UIManager:show(InfoMessage:new{
-                            text = _("That name is not valid for a folder."), timeout = 3,
-                        })
-                        return
-                    end
-                    local path = (parent == "/" and "" or parent) .. "/" .. name
-                    if lfs.attributes(path, "mode") then
-                        UIManager:show(InfoMessage:new{
-                            text = _("A file or folder with that name already exists."), timeout = 3,
-                        })
-                        return
-                    end
-                    UIManager:close(dialog)
-                    if not lfs.mkdir(path) then
-                        UIManager:show(InfoMessage:new{ text = _("The folder could not be created.") })
-                        return
-                    end
-                    self:reload()
-                end,
-            },
-        }},
-    }
-    UIManager:show(dialog)
-    dialog:onShowKeyboard()
-end
-
--- Shows collection `name` (by its ReadCollection key) inside the
--- Collections tab, with the back pill returning to the list.
-function KoboldMyBooks:openCollection(name)
-    self.group_page = self.page
-    self.group = nil
-    for _i, g in ipairs(KoboldMyBooksData.getGroups(self.books, "collections")) do
-        if g.key == name then self.group = g break end
-    end
-    self.page = 1
-    self:applyList()
-    self:refresh()
-end
-
 -- Status text in the right column: Unread, 42% read, or Finished.
 local function statusText(item)
     if item.status == "finished" then return _("Finished") end
+    if item.status == "onhold" then return _("On hold") end
     if item.status == "reading" then
         if item.percent then
             return math.floor(item.percent * 100) .. _("% read")
@@ -1500,12 +1246,13 @@ end
 function KoboldMyBooks:emptyText()
     if self.tab == "files" then return _("This folder is empty.") end
     if self.tab == "books" then
-        if self.filter == "all" then return _("No books found in your home folder.") end
+        if self.filter == "all" and not self.lang then return _("No books found in your home folder.") end
         return _("No books match this filter.")
     end
     if self.group then return _("No books here.") end
     if self.tab == "authors" then return _("No authors found.") end
     if self.tab == "series" then return _("No series found.") end
+    if self.tab == "genres" then return _("No genres found. They come from the keywords of your books.") end
     return _("No collections yet.")
 end
 
@@ -1627,6 +1374,59 @@ end
 
 function OutlinedIcon:free() end
 
+-- The square of selection mode, in the place of the "..." on a cover: empty,
+-- or ticked (square-dot) when the book is selected. Same outline as the "...".
+function KoboldMyBooks:selectIcon(selected)
+    self.select_icons = self.select_icons or {}
+    local name = selected and "square-dot" or "square"
+    if not self.select_icons[name] then
+        self.select_icons[name] = OutlinedIcon:new{ name = name, size = moreSize() }
+    end
+    return self.select_icons[name]
+end
+
+-- How many items a folder holds (hidden files and .sdr folders left out).
+local function folderCount(path)
+    local count = 0
+    local ok, iter, state = pcall(lfs.dir, path)
+    if ok then
+        for name in iter, state do
+            if name:sub(1, 1) ~= "." and not name:match("%.sdr$") then count = count + 1 end
+        end
+    end
+    return count
+end
+
+local function itemsText(count)
+    return count == 1 and _("1 item") or string.format(_("%d items"), count)
+end
+
+-- A folder in grid view (Files): a light grey tile with the folder icon and,
+-- lying on its foot, the same black pill as the folders of Home, with the
+-- folder's name and how many items it holds. The tile follows Settings >
+-- Rounded corners: with that off it has square corners (the pill stays as is).
+function KoboldMyBooks:buildFolderTile(item)
+    local L = self.L
+    local square = not Rounded.enabled()
+    local w, h = L.grid_cell_w, L.grid_cover_h
+    local icon_size = math.floor(math.min(w, h) * 0.45)
+    local tile = FrameContainer:new{
+        width = w, height = h,
+        bordersize = 0, margin = 0, padding = 0,
+        radius = square and 0 or Screen:scaleBySize(6),
+        background = Blitbuffer.Color8(0xDD),
+        CenterContainer:new{
+            dimen = Geom:new{ w = w, h = h },
+            KoboldWidgets.icon("folder", icon_size, { fallback = "appbar.filebrowser" }),
+        },
+    }
+    return OverlapGroup:new{
+        dimen = Geom:new{ w = w, h = h },
+        tile,
+        CoverBadge.titlePill(item.name, folderCount(item.path), w, h, math.floor(w / 2)),
+    }
+end
+
 -- One "..." icon shared by every cell (made once, freed with the screen).
 function KoboldMyBooks:moreIcon()
     if not self.more_icon then
@@ -1675,7 +1475,9 @@ function KoboldMyBooks:buildGrid()
                 local is_group = item.books ~= nil
                 local file = is_group and item.books[1] and item.books[1].file or item.file
                 local cover
-                if file and is_group and #item.books > 1 then
+                if item.is_dir then
+                    cover = nil   -- a folder tile is built whole below
+                elseif file and is_group and #item.books > 1 then
                     -- A group of several books looks like a series row of the
                     -- list: two short lines stacked above the first book's
                     -- cover, which is shortened to make room for them.
@@ -1716,7 +1518,9 @@ function KoboldMyBooks:buildGrid()
                         background = Blitbuffer.Color8(0xDD),
                     })
                 end
-                if is_group then
+                if item.is_dir then
+                    row[#row + 1] = self:buildFolderTile(item)
+                elseif is_group then
                     row[#row + 1] = VerticalGroup:new{
                         align = "left",
                         cover,
@@ -1735,9 +1539,14 @@ function KoboldMyBooks:buildGrid()
                             w = L.grid_cell_w, h = L.grid_cover_h,
                             rect = self:coverRect(file, 0, 0),
                             badge = CoverBadge.make(
-                                item.status == "reading" and item.percent or nil,
-                                item.status == "finished"),
-                            more = self:moreIcon(), more_size = moreSize(),
+                                (item.status == "reading" or item.status == "onhold") and item.percent or nil,
+                                item.status == "finished",
+                                item.status == "onhold"),
+                            -- selection mode: a square (ticked when selected)
+                            -- where the "..." is
+                            more = self:selecting() and self:selectIcon(Clipboard.isSelected(file))
+                                or self:moreIcon(),
+                            more_size = moreSize(),
                             path = file,
                         },
                     }
@@ -1784,6 +1593,14 @@ function KoboldMyBooks:gridCellAt(pos)
     return item, col, cell_x, cell_y
 end
 
+-- Where a menu of a whole grid cell (a collection, a folder) points: the cell,
+-- opening to its left or right edge depending on the column.
+function KoboldMyBooks:cellAnchor(col, cell_x, cell_y)
+    local L = self.L
+    return Geom:new{ x = cell_x, y = cell_y, w = L.grid_cell_w, h = L.grid_cell_h },
+        (col < L.grid_cols / 2) and "left" or "right"
+end
+
 -- The book menu of a grid book, opened from the "..." on its cover or by a
 -- long-press. It points at the "..." corner of the cover.
 function KoboldMyBooks:openGridMenu(item, col, cell_x, cell_y)
@@ -1800,18 +1617,23 @@ function KoboldMyBooks:onGridTap(pos)
     local L = self.L
     local item, col, cell_x, cell_y = self:gridCellAt(pos)
     if not item then return end
+    if item.is_dir then
+        self:openFolder(item.path)
+        return
+    end
     if item.books then
         self:openGroup(item)
         return
     end
+    if self:selecting() and item.file then
+        -- Selection mode: a tap anywhere on a book ticks it.
+        self:toggleSelect(item.file)
+        return
+    end
     local z = moreHit(self:coverRect(item.file, cell_x, cell_y))
     if pos.x >= z.x and pos.x < z.x + z.w and pos.y >= z.y and pos.y < z.y + z.h then
-        if self.tab == "collections" and self.group then
-            -- inside a collection the "..." removes the book from it, as in the list
-            self:confirmRemoveFromCollection(item)
-        else
-            self:openGridMenu(item, col, cell_x, cell_y)
-        end
+        -- the same menu everywhere; inside a collection it also has "Remove from collection"
+        self:openGridMenu(item, col, cell_x, cell_y)
     else
         KoboldReader.tapOpen(self, item.file)
     end
@@ -1821,9 +1643,23 @@ end
 function KoboldMyBooks:onGridHold(pos)
     local item, col, cell_x, cell_y = self:gridCellAt(pos)
     if not item then return end
+    if item.is_dir then
+        if not self:selecting() then
+            local anchor, align = self:cellAnchor(col, cell_x, cell_y)
+            self:showFolderMenu(item.path, anchor, align)
+        end
+        return
+    end
+    if self:selecting() then
+        if item.file then self:toggleSelect(item.file) end
+        return
+    end
     if item.books then
         -- a collection: its options, as in the list
-        if self.tab == "collections" and not self.group then self:showCollectionOptions(item) end
+        if self.tab == "collections" and not self.group then
+            local anchor, align = self:cellAnchor(col, cell_x, cell_y)
+            self:showCollectionOptions(item, anchor, align)
+        end
         return
     end
     self:openGridMenu(item, col, cell_x, cell_y)
@@ -1856,17 +1692,14 @@ function KoboldMyBooks:onListTap(pos)
         -- Selection mode: a tap on a book ticks it (a folder still opens).
         self:toggleSelect(item.file)
     elseif pos.x >= L.margin + L.list_w - L.dots_w then
-        if self.tab == "collections" and self.group then
-            self:confirmRemoveFromCollection(item)
-        else
-            -- A small anchor right on the "..." (see buildBookRow).
-            local dots_h = Screen:scaleBySize(20)
-            local dy = item.dots_y or math.floor(slot_h / 2)
-            self:openBookMenu(item.file, Geom:new{
-                x = L.margin + L.list_w - L.dots_w, y = L.y_list + (i - 1) * slot_h + dy - math.floor(dots_h / 2),
-                w = L.dots_w, h = dots_h,
-            }, "side", item)
-        end
+        -- The book menu, pointing right at the "..." (see buildBookRow). Inside a
+        -- collection it also has "Remove from collection".
+        local dots_h = Screen:scaleBySize(20)
+        local dy = item.dots_y or math.floor(slot_h / 2)
+        self:openBookMenu(item.file, Geom:new{
+            x = L.margin + L.list_w - L.dots_w, y = L.y_list + (i - 1) * slot_h + dy - math.floor(dots_h / 2),
+            w = L.dots_w, h = dots_h,
+        }, "side", item)
     else
         KoboldReader.tapOpen(self, item.file)
     end
@@ -1891,97 +1724,11 @@ end
 
 -- Files tab ------------------------------------------------------------
 
--- The home folder set in KOReader (where the library lives).
-function KoboldMyBooks:filesRoot()
-    local home = G_reader_settings and G_reader_settings:readSetting("home_dir")
-    if home and lfs.attributes(home, "mode") == "directory" then return (home:gsub("/+$", "")) end
-    return "/"
-end
-
-function KoboldMyBooks:currentFolder()
-    local dir = self.folder
-    if not dir or lfs.attributes(dir, "mode") ~= "directory" then dir = self:filesRoot() end
-    if dir ~= "/" then dir = dir:gsub("/+$", "") end
-    self.folder = dir
-    return dir
-end
-
-function KoboldMyBooks:parentFolder()
-    local dir = self:currentFolder()
-    local parent = dir:match("^(.*)/[^/]+/*$")
-    if not parent or parent == "" then parent = "/" end
-    return parent
-end
-
--- Entries of folder `dir`: subfolders, then books KOReader can open, each
--- sorted by name. Hidden files and book data folders (.sdr) are left out.
--- Books use the library's entries when known, so status and covers match.
-function KoboldMyBooks:listFolder(dir)
-    local DocumentRegistry = require("document/documentregistry")
-    local by_file = {}
-    for _i, b in ipairs(self.books) do by_file[b.file] = b end
-    local dirs, files = {}, {}
-    local ok, iter, state = pcall(lfs.dir, dir)
-    if not ok then return {} end
-    for name in iter, state do
-        if name:sub(1, 1) ~= "." and not name:match("%.sdr$") then
-            local path = (dir == "/" and "" or dir) .. "/" .. name
-            local attr = lfs.attributes(path)
-            if attr and attr.mode == "directory" then
-                dirs[#dirs + 1] = { is_dir = true, path = path, name = name }
-            elseif attr and attr.mode == "file" and DocumentRegistry:hasProvider(path) then
-                files[#files + 1] = by_file[path] or {
-                    file = path, mtime = attr.modification or 0, size = attr.size,
-                    title = name:gsub("%.[^%.]+$", ""), title_from_file = true,
-                    sort_key = name:lower(), author_list = {},
-                    ext = (name:match("%.([^%.]+)$") or ""):upper(),
-                }
-            end
-        end
-    end
-    table.sort(dirs, function(a, b) return a.name:lower() < b.name:lower() end)
-    table.sort(files, function(a, b) return (a.file:match("[^/]+$") or ""):lower() < (b.file:match("[^/]+$") or ""):lower() end)
-    for _i, f in ipairs(files) do dirs[#dirs + 1] = f end
-    return dirs
-end
-
--- Shows folder `dir`; the page of the folder being left is remembered for
--- coming back to it.
-function KoboldMyBooks:openFolder(dir)
-    self.folder_pages = self.folder_pages or {}
-    self.folder_pages[self:currentFolder()] = self.page
-    self.folder = dir
-    self.page = self.folder_pages[dir] or 1
-    self:applyList()
-    self:refresh()
-end
-
--- KOReader's long-press menu for a folder (rename, delete, cut, copy, set as
--- home, ...). Changes it makes refresh the file browser, which reloads this
--- list through hookFileManager.
-function KoboldMyBooks:showFolderMenu(dir)
-    local fc = fileChooser()
-    local show = fc and fc.showFileDialog
-    local ok = false
-    if show then
-        ok = pcall(show, fc, { path = dir, is_file = false, text = (dir:match("[^/]+$") or dir) .. "/" })
-    end
-    if not ok then
-        UIManager:show(InfoMessage:new{ text = _("The folder menu is not available.") })
-    end
-end
-
 -- A folder row: folder icon, name, and how many items are inside.
 function KoboldMyBooks:buildFolderRow(item)
     local L = self.L
     local _n, _slot, row_h = self:rowSize()
-    local count = 0
-    local ok, iter, state = pcall(lfs.dir, item.path)
-    if ok then
-        for name in iter, state do
-            if name:sub(1, 1) ~= "." and not name:match("%.sdr$") then count = count + 1 end
-        end
-    end
+    local count = folderCount(item.path)
     local icon_size = math.floor(L.thumb_w * 0.8)
     local text_w = L.list_w - L.thumb_w - 3 * L.col_gap - L.chevron
     return HorizontalGroup:new{
@@ -1997,7 +1744,7 @@ function KoboldMyBooks:buildFolderRow(item)
                 TextWidget:new{ text = item.name, face = KoboldWidgets.face(17), max_width = text_w },
                 VerticalSpan:new{ width = Screen:scaleBySize(4) },
                 TextWidget:new{
-                    text = count == 1 and _("1 item") or string.format(_("%d items"), count),
+                    text = itemsText(count),
                     face = KoboldWidgets.face(14),
                     fgcolor = KoboldWidgets.subtitleColor(),
                     max_width = text_w,
@@ -2013,7 +1760,8 @@ function KoboldMyBooks:buildFolderRow(item)
 end
 
 function KoboldMyBooks:showTab(id)
-    if id ~= "files" then Clipboard.exitSelect() end
+    -- The selection survives only a tap on Files while already on Files.
+    if id ~= "files" or self.tab ~= "files" then Clipboard.exitSelect() end
     if id == "files" then
         -- The Files tab always opens at the user's home folder, also when it
         -- is tapped again from inside a subfolder: the way back to home.
@@ -2032,9 +1780,19 @@ function KoboldMyBooks:showTab(id)
     self:refresh()
 end
 
--- Shows the books of one author, series or collection. The group list page
+-- The open tab was turned off in Settings > Library options > Tabs: the first
+-- tab that is on opens instead.
+function KoboldMyBooks:keepTabOn()
+    if KoboldTabs.isEnabled(self.tab) then return end
+    self.tab = KoboldTabs.first()
+    self.group, self.group_page, self.page = nil, nil, 1
+    Clipboard.exitSelect()
+end
+
+-- Shows the books of one author, series, collection or genre. The group list page
 -- is remembered so the back pill returns to it.
 function KoboldMyBooks:openGroup(group)
+    Clipboard.exitSelect()
     self.group = group
     self.group_page = self.page
     self.page = 1
@@ -2043,94 +1801,73 @@ function KoboldMyBooks:openGroup(group)
 end
 
 function KoboldMyBooks:closeGroup()
+    Clipboard.exitSelect()
     self.group = nil
     self.page = self.group_page or 1
     self:applyList()
     self:refresh()
 end
 
--- Options for a sheet row: { id, label } in the order given.
-local function optionList(ids, label_of)
-    local out = {}
-    for _i, id in ipairs(ids) do
-        out[#out + 1] = { id = id, label = label_of(id) }
-    end
-    return out
-end
-
--- Books sort, as two rows of one sheet. Both rows share self.sort; the sheet
--- lights only the chip whose id matches, so exactly one is chosen.
-local SORT_ROWS = {
-    { label = _("Date"),  ids = { "opened_desc", "added_desc", "added_asc" } },
-    { label = _("Title"), ids = { "title_asc", "title_desc" } },
-}
-
--- Saves a new filter or sort choice and redraws the list from page 1.
+-- Saves a new filter, sort or view choice (nil: nothing chosen) and redraws
+-- the list from page 1. The sheet stays open, so several can be changed.
 function KoboldMyBooks:setChoice(field, key, id)
     self[field] = id
-    G_reader_settings:saveSetting(key, id)
+    saveChoice(key, id)
     self.page = 1
     self:applyList()
     self:refresh()
 end
 
-function KoboldMyBooks:showFilterDialog()
-    OptionSheet.show{
-        title = _("Filter"),
-        rows = { {
-            options  = optionList(KoboldMyBooksData.FILTERS, function(id) return FILTER_LABELS[id] end),
-            selected = self.filter,
-            close    = true,
-            on_pick  = function(id) self:setChoice("filter", FILTER_KEY, id) end,
-        } },
-    }
-end
-
-function KoboldMyBooks:showSortDialog()
-    local rows = {}
-    for _i, group in ipairs(SORT_ROWS) do
-        rows[#rows + 1] = {
-            label    = group.label,
-            options  = optionList(group.ids, function(id) return SORT_LABELS[id].pill end),
-            selected = self.sort,
-            close    = true,
-            on_pick  = function(id) self:setChoice("sort", SORT_KEY, id) end,
-        }
-    end
-    OptionSheet.show{ title = _("Sort"), rows = rows }
-end
-
--- The Books tab's "...": list or grid view.
+-- The adjust button: the same View sheet as Home. The Books tab has all of it;
+-- the Authors, Series and Collections lists have Grid / List and A-Z / Z-A;
+-- inside a group only Grid / List.
 function KoboldMyBooks:showViewDialog()
-    OptionSheet.show{
-        title = _("View"),
-        rows = { {
-            options = {
-                { id = "list", label = _("List view"), icon = "list" },
-                { id = "grid", label = _("Grid view"), icon = "grid" },
+    local layout = {
+        selected = self.view,
+        on_pick = function(id) self:setChoice("view", VIEW_KEY, id) end,
+    }
+    if self.tab == "books" then
+        ViewSheet.show{
+            layout = layout,
+            -- no status chosen is the filter "all"
+            status = {
+                selected = (self.filter ~= "all") and self.filter or nil,
+                on_pick = function(id) self:setChoice("filter", FILTER_KEY, id or "all") end,
             },
-            selected = self.view,
-            close    = true,
-            on_pick  = function(id) self:setChoice("view", VIEW_KEY, id) end,
-        } },
-    }
+            sort   = { selected = self.sort,   on_pick = function(id) self:setChoice("sort", SORT_KEY, id) end },
+            alpha  = { selected = self.alpha,  on_pick = function(id) self:setChoice("alpha", ALPHA_KEY, id) end },
+            lang   = {
+                list = BookLang.languages(self.books), selected = self.lang,
+                on_pick = function(id) self:setChoice("lang", LANG_KEY, id) end,
+            },
+        }
+    elseif self:showsGroups() then
+        ViewSheet.show{
+            layout = layout,
+            -- the lists always have an order: A-Z unless Z-A is chosen
+            alpha = {
+                selected = (self.group_sort == "name_desc") and "za" or "az",
+                toggle = false,
+                on_pick = function(id)
+                    self:setChoice("group_sort", GROUP_SORT_KEY, (id == "za") and "name_desc" or "name_asc")
+                end,
+            },
+        }
+    else
+        ViewSheet.show{ layout = layout }
+    end
 end
 
-function KoboldMyBooks:showGroupSortDialog()
-    OptionSheet.show{
-        title = _("Sort"),
-        rows = { {
-            options  = optionList(KoboldMyBooksData.GROUP_SORTS, function(id) return GROUP_SORT_LABELS[id].pill end),
-            selected = self.group_sort,
-            close    = true,
-            on_pick  = function(id) self:setChoice("group_sort", GROUP_SORT_KEY, id) end,
-        } },
-    }
-end
-
-fileChooser = function()
-    local ok, FileManager = pcall(require, "apps/filemanager/filemanager")
-    local fm = ok and FileManager and FileManager.instance
+-- `need`: the file browser is really needed (the book menu): with a book
+-- parked it is made now. Hooking its refresh does not need it.
+fileChooser = function(need)
+    local fm
+    if need then
+        fm = require("kobold.ui.park").fm()
+    else
+        local FileManager = package.loaded["apps/filemanager/filemanager"]
+        fm = FileManager and FileManager.instance
+    end
     return fm and fm.file_chooser
 end
 
@@ -2141,14 +1878,15 @@ end
 -- at `anchor` (a Geom on screen). Changes made from it reload the list.
 -- `align` "side" opens it beside the anchor (book rows, as on the e-reader).
 -- `item` (optional) is the list item of the book; inside a collection it adds
--- "Remove from collection", which opens the same confirmation as the "...".
+-- "Remove from collection" (it asks first, see confirmRemoveFromCollection).
 function KoboldMyBooks:openBookMenu(file, anchor, align, item)
     local on_remove, on_select
     if item and self.tab == "collections" and self.group then
         on_remove = function() self:confirmRemoveFromCollection(item) end
     end
-    if item and self.tab == "files" and not item.is_dir and not self:selecting()
-        and not Clipboard.hasBoard() then
+    -- Select: on Files (while the clipboard is empty) and inside a collection.
+    local can_select = (self.tab == "files" and not Clipboard.hasBoard()) or self:inCollection()
+    if item and can_select and not item.is_dir and not self:selecting() then
         on_select = function()
             Clipboard.enterSelect()
             Clipboard.add(file)
@@ -2174,7 +1912,7 @@ function KoboldMyBooks:rowRect(pos)
 end
 
 function KoboldMyBooks:showBookMenu(file)
-    local fc = fileChooser()
+    local fc = fileChooser(true)
     local show = fc and (fc.showFileDialog or fc.onFileHold)
     local ok = false
     if show then
@@ -2182,7 +1920,7 @@ function KoboldMyBooks:showBookMenu(file)
         ok = pcall(show, fc, item)
     end
     if not ok then
-        UIManager:show(InfoMessage:new{ text = _("The book menu is not available.") })
+        Toast.error(_("The book menu is not available."))
     end
 end
 
@@ -2218,6 +1956,8 @@ end
 -- found again by its key; if it is gone, the group list is shown instead.
 function KoboldMyBooks:reload()
     KoboldLibrary.invalidate()
+    BookLang.forget()
+    Genres.forget()
     self.books = KoboldMyBooksData.getBooks()
     if self.group then
         local key = self.group.key
@@ -2234,8 +1974,11 @@ end
 -- A setting changed in Settings (rows per page, cover outline, rounded
 -- corners...): lay the screen out again with it, on the page it was on.
 function KoboldMyBooks:paintTo(bb, x, y)
+    -- Rotated (or resized) since it was built: lay it out again first.
+    if KoboldMetrics.sizeChanged(self) then self:relayout() end
     if self.prefs_rev ~= nil and KoboldPrefs.revision() ~= self.prefs_rev then
         self.prefs_rev = KoboldPrefs.revision()
+        self:keepTabOn()
         self:layoutRows()
         self:applyList()
         self[1] = self:build()
@@ -2265,8 +2008,16 @@ function KoboldMyBooks:onCloseWidget()
 end
 
 function KoboldMyBooks:onClose()
-    UIManager:close(self)
+    require("kobold.ui.park").closeScreen(self)
     return true
 end
+
+-- The rest of the class lives in two files, mixed into it here: the
+-- collections' own actions (rename, remove, add, remove the selected books)
+-- and the Files tab (folders, copy / move / delete). They add methods to
+-- this class and use `self` as every other method does.
+local mixin_ctx = { countText = countText }
+require("kobold.ui.mybooks_collections").install(KoboldMyBooks, mixin_ctx)
+require("kobold.ui.mybooks_files").install(KoboldMyBooks, mixin_ctx)
 
 return KoboldMyBooks

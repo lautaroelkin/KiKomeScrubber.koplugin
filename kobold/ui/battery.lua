@@ -1,7 +1,10 @@
 -- kobold/ui/battery.lua — Kobold
--- Battery icon for the status bar: icons/battery-empty.svg (tip on the
--- left), with either a black fill that follows the charge or
--- the charge percentage written inside it (Kobold Settings > Battery).
+-- Battery icon for the status bar. Kobold's own icons are drawn with bars
+-- (icons/battery-full.svg, -medium, -low and the empty battery.svg; the
+-- charging one is battery-charging.svg), the tip on the left, and the one that
+-- matches the charge is shown; or the charge percentage is written inside the
+-- empty one (Kobold Settings > Battery). KOReader's old icon has a black fill
+-- that follows the charge instead.
 
 local Blitbuffer      = require("ffi/blitbuffer")
 local Device          = require("device")
@@ -21,16 +24,24 @@ local Screen = Device.screen
 -- grid INNER (the inside of the outline, for the percentage) and FILL (the
 -- area the charge fills).
 local SETS = {
-    -- Kobold's own; the tip already points left.
+    -- Kobold's own. The drawings have the tip on the right, so they are turned
+    -- 180 degrees to put it on the left (set rotation = 0 to have it on the
+    -- right). `bars` lists the icons by charge: the first one whose `min` the
+    -- charge reaches is shown; under all of them, the empty one (`icon`).
     kobold = {
-        icon = "battery-empty.svg", charging = "battery-lightning.svg", rotation = 0,
-        INNER = { x = 6.25, y = 8.25, w = 13.5, h = 7.5 },
-        FILL  = { x = 7.25, y = 9.25, w = 11.5, h = 5.5 },
+        icon = "battery.svg", charging = "battery-charging.svg", rotation = 180,
+        bars = {
+            { min = 70, icon = "battery-full.svg" },
+            { min = 40, icon = "battery-medium.svg" },
+            { min = 15, icon = "battery-low.svg" },
+        },
+        -- The inside of the outline once turned, for the percentage.
+        INNER = { x = 7, y = 7, w = 14, h = 10 },
     },
     -- The battery Kobold used before its own icons, turned 180 degrees so
     -- the tip faces left.
     koreader = {
-        icon = "battery.svg", charging = "battery-charging.svg", rotation = 180,
+        icon = "battery-classic.svg", charging = "battery-classic-charging.svg", rotation = 180,
         -- Its bolt is plain black, so a fill under it would hide it.
         no_fill_while_charging = true,
         INNER = { x = 7, y = 9, w = 13, h = 6 },
@@ -67,8 +78,17 @@ function KoboldBattery:init()
     local set = require("kobold.data.prefs").get("icons") == "koreader" and SETS.koreader or SETS.kobold
     self.set = set
     local file = existing(set.icon)
-    -- In fill mode, charging shows the charging icon (a lightning bolt with
-    -- a white outline) over the usual fill.
+    -- Not in percentage mode, the icon follows the charge: the bars icon that
+    -- matches it (Kobold's icons)...
+    if set.bars and self.style ~= "percent" and self.level then
+        for _i, bar in ipairs(set.bars) do
+            if self.level >= bar.min then
+                file = existing(bar.icon) or file
+                break
+            end
+        end
+    end
+    -- ...and while charging, the charging icon.
     local charging_svg = self.style ~= "percent" and charging() and existing(set.charging)
     if charging_svg then file = charging_svg end
     self.show_level = not (charging_svg and set.no_fill_while_charging)
@@ -99,7 +119,7 @@ function KoboldBattery:paintTo(bb, x, y)
     local function px(v) return math.floor(v * u + 0.5) end
     -- The fill is painted first and the icon over it, so a charging bolt
     -- stays visible on top of the fill.
-    if self.level and self.show_level and self.style ~= "percent" then
+    if FILL and self.level and self.show_level and self.style ~= "percent" then
         -- Drains toward the tip: the full part stays on the right.
         local fill_w = px(FILL.w)
         local w = math.floor(fill_w * self.level / 100 + 0.5)

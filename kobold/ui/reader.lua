@@ -1,7 +1,6 @@
 -- kobold/ui/reader.lua — Kobold
 -- Opens a book from a Kobold screen.
 
-local InfoMessage     = require("ui/widget/infomessage")
 local UIManager       = require("ui/uimanager")
 local _               = require("gettext")
 local KoboldSession   = require("kobold.ui.session")
@@ -20,6 +19,14 @@ local KoboldReader = {}
 -- could not be opened.
 function KoboldReader.open(screen, file, opts)
     opts = opts or {}
+    -- The same book is parked under KiKome: bring it back as it was, with
+    -- no loading (see park.lua). The screen it is opened from is the one to
+    -- come back to when the book is left again.
+    local Park = require("kobold.ui.park")
+    if Park.isParked() and Park.parkedFile() == file and Park.unpark(screen) then
+        KoboldSession.rememberScreen(screen)
+        return
+    end
     -- The screen is parked, not closed: it stays under the reader so it
     -- can come back at once when the book closes (see session.lua).
     KoboldSession.rememberScreen(screen)
@@ -42,6 +49,8 @@ function KoboldReader.open(screen, file, opts)
     end
     local function openNow()
         local ok, err = pcall(function()
+            -- Another book is parked: it closes first, inside this wait.
+            if Park.isParked() then Park.closeForSwitch() end
             local ReaderUI = package.loaded["apps/reader/readerui"]
                 or require("apps/reader/readerui")
             -- With the pill on, KOReader's own "Opening file" message is
@@ -59,9 +68,7 @@ function KoboldReader.open(screen, file, opts)
         if not ok then
             KoboldReader.opened(pill_screen, true)
             if opts.on_fail then opts.on_fail() end
-            UIManager:show(InfoMessage:new{
-                text = _("Could not open the book: ") .. tostring(err),
-            })
+            require("kobold.ui.toast").error(_("Could not open the book: ") .. tostring(err), { timeout = 6 })
         end
     end
     if Transition.enabled() then UIManager:nextTick(openNow) else openNow() end
@@ -91,15 +98,15 @@ local last_tap = nil  -- { file, ms }
 
 -- Opens `file` from a tap. In double-tap mode the first tap only arms it:
 -- a second tap on the same book within the time limit opens it.
-function KoboldReader.tapOpen(screen, file)
+function KoboldReader.tapOpen(screen, file, opts)
     local mode, timeout_ms = tapMode()
-    if mode == "single" then return KoboldReader.open(screen, file) end
+    if mode == "single" then return KoboldReader.open(screen, file, opts) end
     local now = os.time() * 1000 + math.floor((os.clock() % 1) * 1000)
     local ok, time = pcall(require, "ui/time")
     if ok and time and time.now then now = time.to_ms(time.now()) end
     if last_tap and last_tap.file == file and now - last_tap.ms <= timeout_ms then
         last_tap = nil
-        return KoboldReader.open(screen, file)
+        return KoboldReader.open(screen, file, opts)
     end
     last_tap = { file = file, ms = now }
 end

@@ -27,6 +27,7 @@ local _               = require("gettext")
 local OptionSheet     = require("kobold.ui.option_sheet")
 local KoboldMeta      = require("kobold.meta")
 local KoboldWidgets   = require("kobold.ui.widgets")
+local Refresh         = require("kobold.ui.refresh")
 
 local Screen = Device.screen
 
@@ -42,7 +43,7 @@ local KoboldBookMenu = InputContainer:extend{
     koreader = false, -- true (Library tab): the KOReader Details row, and "..." on the details page
     on_remove = nil, -- inside a collection: adds "Remove from collection" and runs this when tapped
     on_select = nil, -- Files tab: adds "Select" and runs this when tapped
-    items = nil,     -- a list of { text, icon, action = function } that replaces the book rows
+    items = nil,     -- a list of { text, icon, action = function, bold? } that replaces the book rows
 }
 
 -- The first icon of `names` (a name or a list of names) whose svg exists in
@@ -109,7 +110,9 @@ function KoboldBookMenu:build()
                 OptionSheet.iconWidget(pickIcon(item.icon), icon_size, Blitbuffer.COLOR_BLACK),
                 HorizontalSpan:new{ width = icon_gap },
                 TextWidget:new{
-                    text = item.text, face = italicFace(17),
+                    -- a `bold` row is a title (the name of a collection, a folder)
+                    text = item.text, face = item.bold and KoboldWidgets.face(17) or italicFace(17),
+                    bold = item.bold or false,
                     max_width = inner - icon_pad - icon_size - icon_gap - text_pad,
                 },
             },
@@ -221,6 +224,8 @@ end
 
 function KoboldBookMenu:onShow()
     UIManager:setDirty(self, "ui", self.frame_dimen)
+    -- Once more when the panel is free, in case this first update is lost.
+    Refresh.settle(self, function() return self.frame_dimen end)
     return true
 end
 
@@ -233,7 +238,8 @@ end
 -- the given rows (the Library's More and selection menus), not a book's. It is always Kobold's own menu; `koreader` (the Library tab sets
 -- it) adds the row that opens KOReader's book menu.
 function KoboldBookMenu.show(opts)
-    UIManager:show(KoboldBookMenu:new(opts))
+    local menu = KoboldBookMenu:new(opts)
+    UIManager:show(menu, "ui", menu.frame_dimen)
 end
 
 return KoboldBookMenu

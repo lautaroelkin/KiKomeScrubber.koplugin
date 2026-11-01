@@ -2,6 +2,7 @@
 -- Registers named tap zones on a widget.
 
 local Device          = require("device")
+local _               = require("gettext")
 
 local Screen = Device.screen
 
@@ -76,8 +77,22 @@ function KoboldTaps.topMenu(screen)
             },
             handler = function(ges)
                 if ges.direction ~= "south" then return false end
-                local ok, FileManager = pcall(require, "apps/filemanager/filemanager")
-                local menu = ok and FileManager and FileManager.instance and FileManager.instance.menu
+                -- A book parked under KiKome has no file browser: it is made now,
+                -- which closes the book and takes a moment. A message says so
+                -- first, so the screen does not look frozen meanwhile.
+                local Park = require("kobold.ui.park")
+                local working, Toast
+                if Park.isParked() then
+                    local ok, T = pcall(require, "kobold.ui.toast")
+                    if ok and T then
+                        Toast = T
+                        local ok2, entry = pcall(T.working, _("Closing the book…"), { timeout = 15 })
+                        if ok2 then working = entry end
+                    end
+                end
+                local fm = Park.fm()
+                if working then pcall(Toast.dismiss, working) end
+                local menu = fm and fm.menu
                 if not menu then return false end
                 if menu.onSwipeShowMenu then
                     return menu:onSwipeShowMenu(ges)

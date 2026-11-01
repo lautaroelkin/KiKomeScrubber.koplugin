@@ -4,7 +4,6 @@
 -- picker, and running one by id.
 
 local Event           = require("ui/event")
-local InfoMessage     = require("ui/widget/infomessage")
 local UIManager       = require("ui/uimanager")
 local _               = require("gettext")
 
@@ -54,17 +53,15 @@ end
 -- does not handle it. Anything it opens shows above Kobold.
 function KoboldActions.run(id)
     local def = (actionTable() or {})[id]
-    local ok_fm, FileManager = pcall(require, "apps/filemanager/filemanager")
-    local fm = ok_fm and FileManager and FileManager.instance
+    -- A book parked under KiKome has no file browser: it is made now.
+    local fm = isSimple(def) and require("kobold.ui.park").fm() or nil
     if not (isSimple(def) and fm) then
-        UIManager:show(InfoMessage:new{
-            text = _("This action is not available: ") .. tostring(id),
-        })
+        require("kobold.ui.toast").error(_("This action is not available: ") .. tostring(id))
         return false
     end
     local ok, err = pcall(function() fm:handleEvent(Event:new(def.event, def.arg)) end)
     if not ok then
-        UIManager:show(InfoMessage:new{ text = _("The action failed: ") .. tostring(err) })
+        require("kobold.ui.toast").error(_("The action failed: ") .. tostring(err))
     end
     return ok
 end

@@ -4,12 +4,12 @@
 -- once it closes (saved or not), so the caller can redraw its values.
 
 local ButtonDialog = require("ui/widget/buttondialog")
-local ConfirmBox   = require("ui/widget/confirmbox")
+local ConfirmSheet = require("kobold.ui.confirm_sheet")
 local Device       = require("device")
-local InfoMessage  = require("ui/widget/infomessage")
 local InputDialog  = require("ui/widget/inputdialog")
 local Menu         = require("ui/widget/menu")
 local SpinWidget   = require("ui/widget/spinwidget")
+local Toast        = require("kobold.ui.toast")
 local UIManager    = require("ui/uimanager")
 local _            = require("gettext")
 local KoboldActions = require("kobold.ui.actions")
@@ -103,7 +103,7 @@ function KoboldEditors.action(title, current, on_pick, done)
         }
     end
     if #items == 0 then
-        UIManager:show(InfoMessage:new{ text = _("No KOReader actions were found.") })
+        Toast.error(_("No KOReader actions were found."))
         call(done)
         return
     end
@@ -128,16 +128,17 @@ function KoboldEditors.action(title, current, on_pick, done)
     UIManager:show(menu)
 end
 
+-- A question with two buttons, in Kobold's confirmation sheet (confirm_sheet.lua).
 function KoboldEditors.confirm(text, ok_text, on_ok, done)
-    UIManager:show(ConfirmBox:new{
-        text = text,
-        ok_text = ok_text,
-        ok_callback = function()
+    ConfirmSheet.show{
+        message = text,
+        confirm_text = ok_text,
+        on_confirm = function()
             on_ok()
             call(done)
         end,
-        cancel_callback = function() call(done) end,
-    })
+        on_cancel = function() call(done) end,
+    }
 end
 
 return KoboldEditors

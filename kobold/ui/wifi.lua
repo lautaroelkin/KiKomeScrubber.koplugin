@@ -16,7 +16,6 @@ local HorizontalSpan  = require("ui/widget/horizontalspan")
 local InputContainer  = require("ui/widget/container/inputcontainer")
 local LineWidget      = require("ui/widget/linewidget")
 local LeftContainer   = require("ui/widget/container/leftcontainer")
-local InfoMessage     = require("ui/widget/infomessage")
 local TextBoxWidget   = require("ui/widget/textboxwidget")
 local TextWidget      = require("ui/widget/textwidget")
 local UIManager       = require("ui/uimanager")
@@ -59,28 +58,11 @@ local function readState()
     return { available = true, on = on, connected = connected, ssid = ssid }
 end
 
--- On/off switch, as on the brightness popup: black with "On" when on.
-local function switch(on)
-    local sw_w, sw_h = Screen:scaleBySize(64), Screen:scaleBySize(30)
-    return FrameContainer:new{
-        bordersize = Screen:scaleBySize(2), padding = 0,
-        radius = math.floor(sw_h / 2),
-        background = on and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_WHITE,
-        CenterContainer:new{
-            dimen = Geom:new{ w = sw_w - Screen:scaleBySize(4), h = sw_h - Screen:scaleBySize(4) },
-            TextWidget:new{
-                text = on and _("On") or _("Off"), face = KoboldWidgets.face(14), bold = true,
-                fgcolor = on and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK,
-            },
-        },
-    }, sw_w
-end
-
 -- Builds the box, in the e-reader's style: a switch row ("WI-FI: ENABLED"),
 -- the network row, and a "Wi-Fi Settings" link at the bottom. Records each
 -- row's tap rectangle, in screen coordinates.
 function KoboldWifi:build()
-    local pad    = Screen:scaleBySize(16)
+    local pad    = Screen:scaleBySize(18)
     local border = Screen:scaleBySize(2)
     local row_h  = Screen:scaleBySize(52)
     local line_h = Screen:scaleBySize(1)
@@ -111,16 +93,10 @@ function KoboldWifi:build()
         }
     else
         -- Switch row: tap anywhere on it to turn Wi-Fi on or off.
-        local sw, sw_w = switch(state.on)
-        content[#content + 1] = row(HorizontalGroup:new{
-            align = "center",
-            sw,
-            HorizontalSpan:new{ width = gap },
-            TextWidget:new{
-                text = state.on and _("WI-FI: ENABLED") or _("WI-FI: DISABLED"),
-                face = KoboldWidgets.face(15), max_width = inner - sw_w - gap,
-            },
-        })
+        -- Label on the left, switch flush with the right edge, as on the
+        -- clock and brightness popups.
+        content[#content + 1] = KoboldWidgets.switchRow(inner, row_h,
+            state.on and _("WI-FI: ENABLED") or _("WI-FI: DISABLED"), state.on)
         self.rows.toggle = Geom:new{ x = x0, y = y, w = inner, h = row_h }
         y = y + row_h
 
@@ -153,14 +129,21 @@ function KoboldWifi:build()
             -- Link to KOReader's list of networks, in italics.
             content[#content + 1] = line()
             y = y + line_h
-            content[#content + 1] = row(TextWidget:new{ text = _("Wi-Fi Settings"), face = KoboldWidgets.italicFace(16) })
+            content[#content + 1] = row(HorizontalGroup:new{
+                align = "center",
+                KoboldWidgets.customIcon("wifi-cog", icon_size, "appbar.settings"),
+                HorizontalSpan:new{ width = gap },
+                TextWidget:new{
+                    text = _("Wi-Fi Settings"), face = KoboldWidgets.italicFace(16), max_width = inner - icon_size - gap,
+                },
+            })
             self.rows.settings = Geom:new{ x = x0, y = y, w = inner, h = row_h }
         end
     end
 
     local box = FrameContainer:new{
         width = fw, bordersize = border, padding = pad,
-        radius = KoboldPopup.radius(),
+        radius = KoboldPopup.boxRadius(),
         background = Blitbuffer.COLOR_WHITE,
         content,
     }
@@ -224,13 +207,12 @@ end
 function KoboldWifi:showNetworks()
     self:runAfterClose(function(NetworkMgr)
         local ok = pcall(function()
-            local info = InfoMessage:new{ text = _("Scanning for networks…") }
-            UIManager:show(info)
-            UIManager:forceRePaint()
+            local Toast = require("kobold.ui.toast")
+            local info = Toast.working(_("Scanning for networks…"), { timeout = 30 })
             local list, err = NetworkMgr:getNetworkList()
-            UIManager:close(info)
+            Toast.dismiss(info)
             if not list then
-                UIManager:show(InfoMessage:new{ text = tostring(err) })
+                Toast.error(tostring(err))
                 return
             end
             table.sort(list, function(l, r) return (l.signal_quality or 0) > (r.signal_quality or 0) end)

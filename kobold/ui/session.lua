@@ -51,17 +51,25 @@ function KoboldSession.dropParked()
     if pending then pending.screen = nil end
 end
 
+-- The screen parked under the reader, when it is still in the window stack.
+function KoboldSession.parkedScreen()
+    local w = pending and pending.screen
+    if w and inStack(w) then return w end
+    return nil
+end
+
 -- Moves parked screen `w` to the top of the window stack and asks for a
 -- full repaint (also clears what the book page left on the screen). False
--- when it is no longer in the stack.
-function KoboldSession.raise(w)
+-- when it is no longer in the stack. `refresh` is the refresh type ("full"
+-- by default).
+function KoboldSession.raise(w, refresh)
     local stack = UIManager._window_stack
     if not w or type(stack) ~= "table" then return false end
     for i, entry in ipairs(stack) do
         if entry.widget == w then
             table.remove(stack, i)
             table.insert(stack, entry)
-            UIManager:setDirty(w, "full")
+            UIManager:setDirty(w, refresh or "full")
             return true
         end
     end

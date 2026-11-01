@@ -4,6 +4,8 @@
 --   * a badge in the cover's top right corner: the percentage read, as the
 --     Kindle shows it (a black ribbon with white text, no outline, its bottom cut to a
 --     point), or "Read" in a small black pill once the book is finished;
+--     a book that is On hold shows a pause icon (icons/pause.svg) in the same
+--     ribbon instead of the number;
 --   * optionally a "more" button in the bottom right corner (Library only);
 --   * while a book opens, an "Opening" pill along the bottom of its cover,
 --     in the same black pill style as "Read" (it covers the "more" button);
@@ -12,7 +14,7 @@
 --
 -- Usage:
 --   local CoverBadge = require("kobold.ui.cover_badge")
---   local badge = CoverBadge.make(pct, done)   -- pct: 0..1 or nil, done: boolean
+--   local badge = CoverBadge.make(pct, done, onhold)   -- pct: 0..1 or nil, done / onhold: boolean
 --   local overlay = CoverBadge.Overlay:new{
 --       w = cell_w, h = cell_h,
 --       rect = { x = 0, y = cell_h - sh, w = sw, h = sh },  -- the cover inside the cell
@@ -26,6 +28,8 @@ local Blitbuffer     = require("ffi/blitbuffer")
 local Device         = require("device")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom           = require("ui/geometry")
+local HorizontalGroup = require("ui/widget/horizontalgroup")
+local HorizontalSpan  = require("ui/widget/horizontalspan")
 local TextWidget     = require("ui/widget/textwidget")
 local UIManager      = require("ui/uimanager")
 local Widget         = require("ui/widget/widget")
@@ -41,14 +45,28 @@ local CoverBadge = {}
 function CoverBadge.inset() return Screen:scaleBySize(5) end
 
 -- ── The ribbon with the percentage ──────────────────────────────────────────
-local RibbonBadge = Widget:extend{ text = "", w = 0, h = 0, ribbon = true }
+local RibbonBadge = Widget:extend{ text = "", icon = nil, w = 0, h = 0, ribbon = true }
 
 function RibbonBadge:init()
-    self.label = TextWidget:new{
-        text = self.text, face = KoboldWidgets.face(13), bold = true, fgcolor = WHITE,
-    }
-    local ts = self.label:getSize()
-    self.w = ts.w + 2 * Screen:scaleBySize(8)
+    local ts
+    if self.icon then
+        -- Same height as the ribbon with the percentage, so both look alike.
+        local probe = TextWidget:new{ text = "0%", face = KoboldWidgets.face(13), bold = true }
+        local ph = probe:getSize().h
+        probe:free()
+        self.icon_size = ph
+        local OptionSheet = require("kobold.ui.option_sheet")
+        self.icon_widget = KoboldWidgets.inverted(
+            OptionSheet.iconWidget(self.icon, self.icon_size, BLACK))
+        ts = { w = self.icon_size, h = self.icon_size }
+        self.w = ts.w + 2 * Screen:scaleBySize(10)
+    else
+        self.label = TextWidget:new{
+            text = self.text, face = KoboldWidgets.face(13), bold = true, fgcolor = WHITE,
+        }
+        ts = self.label:getSize()
+        self.w = ts.w + 2 * Screen:scaleBySize(8)
+    end
     self.body_h = ts.h + 2 * Screen:scaleBySize(4)
     self.point = math.floor(self.w * 0.28)
     self.h = self.body_h + self.point
@@ -69,18 +87,27 @@ function RibbonBadge:paintTo(bb, x, y)
         local wi = self:pointWidth(i)
         bb:paintRect(x + math.floor((self.w - wi) / 2), y + self.body_h + i, wi, 1, BLACK)
     end
+    if self.icon_widget then
+        local s = self.icon_size
+        self.icon_widget:paintTo(bb, x + math.floor((self.w - s) / 2), y + math.floor((self.body_h - s) / 2))
+        return
+    end
     local ts = self.label:getSize()
     self.label:paintTo(bb, x + math.floor((self.w - ts.w) / 2), y + math.floor((self.body_h - ts.h) / 2))
 end
 
 function RibbonBadge:free()
     if self.label then self.label:free() end
+    if self.icon_widget and self.icon_widget.free then self.icon_widget:free() end
 end
 
 -- The badge for a book: the ribbon with the percentage read, or the "Read"
--- pill when finished. nil for a book not started.
-function CoverBadge.make(pct, done)
-    if done then
+-- pill when finished, or the ribbon with a pause icon when the book is On
+-- hold (whatever its percentage). nil for a book not started.
+function CoverBadge.make(pct, done, onhold)
+    if onhold then
+        return RibbonBadge:new{ icon = "pause" }
+    elseif done then
         return FrameContainer:new{
             bordersize = 0,
             margin = 0, radius = Screen:scaleBySize(5),
@@ -237,6 +264,44 @@ function CoverBadge.Overlay:free()
     if self.badge and self.badge.free then self.badge:free() end
     if self.opening_pill then self.opening_pill:free() end
     seen[self] = nil
+end
+
+-- The name of a folder, series, author or collection: a black pill with white
+-- letters lying on the foot of a cover or stack (Home's cards and the folders
+-- of the Files grid), with the number after the name. It is centred on
+-- `center_x` (in the cell); a name too long for that makes it grow to the
+-- right, up to the cell's width. The pill carries its own overlap_offset, so
+-- it goes into an OverlapGroup of size cell_w x cell_h.
+-- `square` (optional) gives the pill square corners (Rounded corners off).
+function CoverBadge.titlePill(name, count, cell_w, cell_h, center_x, square)
+    local Screen = Device.screen
+    local inset = Screen:scaleBySize(6)
+    local pad_x, pad_y = Screen:scaleBySize(12), Screen:scaleBySize(4)
+    local border = 0
+    local gap = Screen:scaleBySize(6)
+    local num = TextWidget:new{
+        text = tostring(count), face = KoboldWidgets.face(12), fgcolor = Blitbuffer.COLOR_LIGHT_GRAY,
+    }
+    local max_w = cell_w - 2 * inset
+    local label = TextWidget:new{
+        text = name, face = KoboldWidgets.face(14), bold = true,
+        fgcolor = Blitbuffer.COLOR_WHITE,
+        max_width = math.max(Screen:scaleBySize(20),
+            max_w - 2 * pad_x - 2 * border - gap - num:getSize().w),
+    }
+    local row = HorizontalGroup:new{ align = "center", label, HorizontalSpan:new{ width = gap }, num }
+    local pill = FrameContainer:new{
+        bordersize = border, margin = 0, padding = 0,
+        padding_left = pad_x, padding_right = pad_x, padding_top = pad_y, padding_bottom = pad_y,
+        radius = square and 0 or math.floor((row:getSize().h + 2 * pad_y + 2 * border) / 2),
+        background = Blitbuffer.COLOR_BLACK,
+        row,
+    }
+    local ps = pill:getSize()
+    local x = center_x - math.floor(ps.w / 2)
+    x = math.max(inset, math.min(x, cell_w - ps.w - inset))
+    pill.overlap_offset = { math.max(0, x), math.max(0, cell_h - ps.h - inset) }
+    return pill
 end
 
 return CoverBadge

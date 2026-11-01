@@ -180,6 +180,15 @@ function KoboldNav.attach(screen, W, H, active)
     row.overlap_offset = { 0, nav_top }
 
     local stack = OverlapGroup:new{ dimen = Geom:new{ w = W, h = H } }
+    -- A solid white backing under the whole bar (and a little above it, for
+    -- the mini cover), so nothing of the list or grid behind it shows through
+    -- the icons and labels, in any orientation.
+    local back = LineWidget:new{
+        dimen = Geom:new{ w = W, h = nav_h },
+        background = Blitbuffer.COLOR_WHITE,
+    }
+    back.overlap_offset = { 0, nav_top }
+    stack[#stack + 1] = back
     -- A thin white line just above the bars, so a book cut by the edge of the
     -- shelf does not run into them.
     local sep_h = Screen:scaleBySize(3)

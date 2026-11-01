@@ -8,9 +8,10 @@
 --   Series       one card per series (a stack of covers); tap to open it
 --   Authors      one card per author; tap to open it
 --   Collections  your KOReader collections, one card each
+--   Genres       one card per genre (a keyword of the books); off by default
 --
 -- Every chip has its own layout, Grid or List, picked from the adjust button
--- on the right of the chips. Folders, series, authors and collections show as
+-- on the right of the chips. Folders, series, authors, collections and genres show as
 -- stacked covers in both layouts.
 --
 -- Opening a card shows its books, with a Back row on top. Authors and series
@@ -40,12 +41,18 @@ local TextBoxWidget   = require("ui/widget/textboxwidget")
 local UIManager       = require("ui/uimanager")
 local KoboldLibrary   = require("kobold.data.library")
 local lfs             = require("libs/libkoreader-lfs")
+local KoboldMetrics   = require("kobold.ui.metrics")
 local KoboldTaps      = require("kobold.ui.taps")
 local KoboldWidgets   = require("kobold.ui.widgets")
 local OptionSheet     = require("kobold.ui.option_sheet")
 local CoverBadge      = require("kobold.ui.cover_badge")
 local Rounded         = require("kobold.ui.rounded")
 local Chips           = require("kobold.data.chips")
+local BookLang        = require("kobold.data.booklang")
+local Genres          = require("kobold.data.genres")
+local KoboldBookInfo  = require("kobold.data.bookinfo")
+local MyBooksData     = require("kobold.data.mybooks")
+local ViewSheet       = require("kobold.ui.view_sheet")
 
 local Screen = Device.screen
 local COVER_RATIO = 1.5
@@ -59,11 +66,17 @@ local function customPath(tab)
     return nil
 end
 
+-- A collection chip's id is "collection:<name>"; this gives the name back.
+local function customCollection(tab)
+    if type(tab) == "string" and tab:sub(1, 11) == "collection:" then return tab:sub(12) end
+    return nil
+end
+
 -- ── Layout per chip ────────────────────────────────────────────────────────
 local DEFAULT_LAYOUT = {
     folders = "grid", home = "grid", recent = "list", oldest = "list",
     series = "grid", authors = "grid", collections = "grid",
-    favorites = "grid", tbr = "grid",
+    favorites = "grid", tbr = "grid", genres = "grid",
 }
 local LAYOUT_KEY = "kikome_shelf_layouts"
 
@@ -142,14 +155,20 @@ local function readMeta(file)
     local m = META[file]
     if m then return m end
     m = { authors = {}, title = fileStem(file) }
-    local ok_bim, bim = pcall(require, "bookinfomanager")
-    local info
-    if ok_bim and bim and bim.getBookInfo then
-        local ok, res = pcall(bim.getBookInfo, bim, file, false)
-        if ok then info = res end
-    end
+    -- The cover browser's data for the whole library comes from one query (or
+    -- the saved snapshot), the same source as the Library tabs. Asking it book
+    -- by book was one SQLite query each: seconds on an e-reader with a big
+    -- library, with the screen waiting.
+    local info = KoboldBookInfo.get(file)
     local cp = customProps(file)
-    if not info and not cp then return m end
+    if not info and not cp then
+        -- Not read by the cover browser yet: remembered as such, so sorting
+        -- does not look again at every comparison. forgetMisses() lets the
+        -- next look happen once covers were prepared (their data arrives then).
+        m.pending = true
+        META[file] = m
+        return m
+    end
     info = info or {}
 
     m.title = text(cp and cp.title) or text(info.title) or m.title
@@ -169,7 +188,7 @@ local function readMeta(file)
         series = trim(series)
         if series ~= "" then m.series, m.series_index = series, idx end
     end
-    if info.title or cp then META[file] = m end
+    META[file] = m
     return m
 end
 
@@ -293,6 +312,16 @@ local LibraryShelf = Widget:extend{
 
 function LibraryShelf.invalidateMeta()
     META = {}
+    BookLang.forget()
+    Genres.forget()
+end
+
+-- Books the cover browser had not read when they were looked at are looked at
+-- again next time (background cover extraction has brought their data since).
+function LibraryShelf.forgetMisses()
+    for file, m in pairs(META) do
+        if m.pending then META[file] = nil end
+    end
 end
 
 function LibraryShelf:init()
@@ -303,6 +332,12 @@ function LibraryShelf:init()
     self.views = {}
     for k, v in pairs(st.views or {}) do self.views[k] = v end
     if st.view and not st.views then self.views[self.tab] = st.view end      -- older saved state
+    -- Alphabetical order (az / za), language and reading status filters, also
+    -- kept per chip.
+    self.alphas, self.langs, self.statuses = {}, {}, {}
+    for k, v in pairs(st.statuses or {}) do self.statuses[k] = v end
+    for k, v in pairs(st.alphas or {}) do self.alphas[k] = v end
+    for k, v in pairs(st.langs or {}) do self.langs[k] = v end
     if self.tab == "recent" then self.tab = "home"; self.views.home = "recent" end  -- older saved state
     self.page = st.page or 1
     self.path = st.path
@@ -345,7 +380,9 @@ end
 
 function LibraryShelf:getState()
     return {
-        tab = self.tab, views = self.views, page = self.page, path = self.path,
+        tab = self.tab, views = self.views, alphas = self.alphas, langs = self.langs,
+        statuses = self.statuses,
+        page = self.page, path = self.path,
         drill = self.drill and { kind = self.drill.kind, name = self.drill.name } or nil,
     }
 end
@@ -369,7 +406,8 @@ function LibraryShelf:free()
 end
 
 -- ── What each tab shows ────────────────────────────────────────────────────
--- Groups of books for the Series and Authors tabs, most recently read first.
+-- Groups of books for the Series, Authors, Collections and Genres tabs, most
+-- recently read first.
 function LibraryShelf:computeGroups(kind)
     if self.groups_cache[kind] then return self.groups_cache[kind] end
     local times = readTimes()
@@ -400,6 +438,17 @@ function LibraryShelf:computeGroups(kind)
                         end
                     end
                 end
+            end
+        end
+    elseif kind == "genres" then
+        -- A book with several keywords stands in each of its genres. Genres
+        -- that differ only in case are one (Genres.of gives one spelling).
+        local by_key = {}
+        for _i, file in ipairs(self.files or {}) do
+            for _j, name in ipairs(Genres.of(file)) do
+                local key = name:lower()
+                by_key[key] = by_key[key] or name
+                add(by_key[key], file)
             end
         end
     else
@@ -506,12 +555,60 @@ function LibraryShelf:oldestFiles()
     return list
 end
 
+-- ── Sort / alphabetical / language ─────────────────────────────────────────
+-- Four independent choices that combine: reading status and language (they
+-- narrow the list first), Sort (Recent, Oldest, ...) and an alphabetical order
+-- (A-Z / Z-A). Sort orders what is left; the alphabetical order breaks the
+-- ties of Sort, or orders the list by itself when no Sort is chosen.
+local function titleKey(file)
+    return readMeta(file).title:lower()
+end
+
+-- True when file a goes before file b in the chosen alphabetical order.
+function LibraryShelf:alphaLess(a, b)
+    local ta, tb = titleKey(a), titleKey(b)
+    if ta ~= tb then
+        if self.alpha == "za" then return ta > tb end
+        return ta < tb
+    end
+    return a < b
+end
+
+-- Tie-breaker between two books: alphabetical if chosen, else by path.
+function LibraryShelf:tie(a, b)
+    if self.alpha then return self:alphaLess(a, b) end
+    return a < b
+end
+
+-- True when a book passes the language and reading status filters.
+function LibraryShelf:keepFile(file)
+    if self.lang and BookLang.of(file) ~= self.lang then return false end
+    if self.status and MyBooksData.statusOf(file) ~= self.status then return false end
+    return true
+end
+
+-- Keeps only the books that pass the filters (all of them when none is on).
+function LibraryShelf:filtered(files)
+    if not (self.lang or self.status) then return files end
+    local out = {}
+    for _i, file in ipairs(files) do
+        if self:keepFile(file) then out[#out + 1] = file end
+    end
+    return out
+end
+
+-- The distinct languages of the library, sorted (e.g. { "EN", "ES" }).
+function LibraryShelf:languages()
+    return BookLang.languages(self.files)
+end
+
 -- The four views (Recent, Oldest, Newest added, Oldest added), applied to any
 -- list of books: Library, a folder chip, a series, author or collection.
 -- With no view picked, the list keeps its own order (Library and folder chips:
 -- newest file first). Recent only lists books that were opened.
 function LibraryShelf:viewFiles(files, keep_all)
     local view = self.view
+    files = self:filtered(files)
     local list = {}
     if view == "recent" or view == "oldest" then
         local when = lastOpened()
@@ -525,7 +622,7 @@ function LibraryShelf:viewFiles(files, keep_all)
                 if view == "recent" then return ta > tb end
                 return ta < tb
             end
-            return a < b
+            return self:tie(a, b)
         end)
         if view == "recent" and not keep_all then
             for i = #list, MAX_RECENT + 1, -1 do list[i] = nil end
@@ -537,13 +634,18 @@ function LibraryShelf:viewFiles(files, keep_all)
         list[#list + 1] = file
         stamp[file] = lfs.attributes(file, "modification") or 0
     end
+    -- Only an alphabetical order chosen (no Sort): the list is just A-Z / Z-A.
+    if not view and self.alpha then
+        table.sort(list, function(a, b) return self:alphaLess(a, b) end)
+        return list
+    end
     local newest_first = (view ~= "added_oldest")
     table.sort(list, function(a, b)
         if stamp[a] ~= stamp[b] then
             if newest_first then return stamp[a] > stamp[b] end
             return stamp[a] < stamp[b]
         end
-        return a < b
+        return self:tie(a, b)
     end)
     return list
 end
@@ -551,7 +653,7 @@ end
 -- Books inside a folder, series, author or collection: with no view picked
 -- they keep their own order; with one, all of them are re-sorted.
 function LibraryShelf:ordered(files)
-    if not self.view then return files end
+    if not (self.view or self.alpha or self.lang or self.status) then return files end
     return self:viewFiles(files, true)
 end
 
@@ -560,8 +662,31 @@ end
 function LibraryShelf:viewGroups(groups)
     local view = self.view
     local list = {}
-    for _i, g in ipairs(groups) do list[#list + 1] = g end
-    if not view then return list end
+    -- A language or status keeps the groups that have at least one book that
+    -- passes it.
+    for _i, g in ipairs(groups) do
+        local keep = true
+        if self.lang or self.status then
+            keep = false
+            for _j, file in ipairs(g.files) do
+                if self:keepFile(file) then keep = true; break end
+            end
+        end
+        if keep then list[#list + 1] = g end
+    end
+    local za = (self.alpha == "za")
+    local function nameLess(a, b)
+        local na, nb = a.name:lower(), b.name:lower()
+        if self.alpha and na ~= nb then
+            if za then return na > nb end
+            return na < nb
+        end
+        return na < nb
+    end
+    if not view then
+        if self.alpha then table.sort(list, nameLess) end
+        return list
+    end
     if view == "recent" then
         local kept = {}
         for _i, g in ipairs(list) do
@@ -570,12 +695,12 @@ function LibraryShelf:viewGroups(groups)
         list = kept
         table.sort(list, function(a, b)
             if a.last ~= b.last then return a.last > b.last end
-            return a.name:lower() < b.name:lower()
+            return nameLess(a, b)
         end)
     elseif view == "oldest" then
         table.sort(list, function(a, b)
             if a.last ~= b.last then return a.last < b.last end
-            return a.name:lower() < b.name:lower()
+            return nameLess(a, b)
         end)
     else
         local newest_first = (view ~= "added_oldest")
@@ -584,7 +709,7 @@ function LibraryShelf:viewGroups(groups)
                 if newest_first then return a.added > b.added end
                 return a.added < b.added
             end
-            return a.name:lower() < b.name:lower()
+            return nameLess(a, b)
         end)
     end
     return list
@@ -602,12 +727,13 @@ end
 
 -- The books of KOReader's Favorites or To be read collection (kind is
 -- "favorites" or "tbr"). Books outside the home folder are kept too.
-function LibraryShelf:collectionFiles(kind)
+-- `own_name` is given for a collection chip: the books of that collection.
+function LibraryShelf:collectionFiles(kind, own_name)
     local files = {}
     local ok, rc = pcall(require, "readcollection")
     if not (ok and rc) then return files end
     if not rc.coll and rc._read then pcall(rc._read, rc) end
-    local name = Chips.collectionKey(rc, kind)
+    local name = own_name or Chips.collectionKey(rc, kind)
     local coll = name and rc.coll and rc.coll[name]
     if type(coll) == "table" then
         for file, item in pairs(coll) do
@@ -635,7 +761,7 @@ function LibraryShelf:computeItems()
         return "mixed", content
     end
     if self.drill then return "books", self:ordered(self.drill.files) end
-    if self.tab == "series" or self.tab == "authors" or self.tab == "collections" then
+    if self.tab == "series" or self.tab == "authors" or self.tab == "collections" or self.tab == "genres" then
         return "groups", self:viewGroups(self:computeGroups(self.tab))
     end
     if self.tab == "favorites" or self.tab == "tbr" then
@@ -644,6 +770,10 @@ function LibraryShelf:computeItems()
     local custom = customPath(self.tab)
     if custom then
         return "books", self:viewFiles(self:filesUnder(custom))
+    end
+    local own_collection = customCollection(self.tab)
+    if own_collection then
+        return "books", self:viewFiles(self:collectionFiles(nil, own_collection))
     end
     -- Library: the whole library
     return "books", self:viewFiles(self.files or {})
@@ -670,11 +800,33 @@ end
 
 -- self.view is the view of the chip being shown.
 function LibraryShelf:syncView()
-    self.view = self.views[self:locKey()]
+    local key = self:locKey()
+    self.view  = self.views[key]
+    self.alpha = self.alphas[key]
+    self.lang  = self.langs[key]
+    self.status = self.statuses[key]
 end
 
 function LibraryShelf:setView(id)
     self.views[self:locKey()] = id   -- nil when the chosen one is tapped again
+    self.page = 1
+    self:rebuild()
+end
+
+function LibraryShelf:setAlpha(id)
+    self.alphas[self:locKey()] = id  -- nil when the chosen one is tapped again
+    self.page = 1
+    self:rebuild()
+end
+
+function LibraryShelf:setLang(id)
+    self.langs[self:locKey()] = id
+    self.page = 1
+    self:rebuild()
+end
+
+function LibraryShelf:setStatus(id)
+    self.statuses[self:locKey()] = id  -- nil (the chosen one tapped again): every book
     self.page = 1
     self:rebuild()
 end
@@ -704,17 +856,13 @@ function LibraryShelf:goBack()
     self:rebuild()
 end
 
--- The adjust button opens View options: Layout for the open view, and on
--- Library a row with Recent and Oldest (tap the chosen one again to go back
--- to the whole library).
+-- The adjust button opens the View sheet (view_sheet.lua, the same as in
+-- Library): Grid / List for the open chip, then Sort & Filter: Status, Sort,
+-- Alphabetical and, only when the library has more than one language,
+-- Language. Tapping a chosen option again clears it.
 function LibraryShelf:openLayoutMenu(_anchor)
-    local rows = {
-        {
-            label = "Layout",
-            options = {
-                { id = "grid", label = "Grid", icon = "grid" },
-                { id = "list", label = "List", icon = "list" },
-            },
+    ViewSheet.show{
+        layout = {
             selected = layoutFor(self:layoutKey()),
             on_pick = function(id)
                 setLayout(self:layoutKey(), id)
@@ -722,24 +870,14 @@ function LibraryShelf:openLayoutMenu(_anchor)
                 self:rebuild()
             end,
         },
+        status = { selected = self.status, on_pick = function(id) self:setStatus(id) end },
+        sort   = { selected = self.view,  on_pick = function(id) self:setView(id) end },
+        alpha  = { selected = self.alpha, on_pick = function(id) self:setAlpha(id) end },
+        lang   = {
+            list = self:languages(), selected = self.lang,
+            on_pick = function(id) self:setLang(id) end,
+        },
     }
-    do
-        -- One row, one choice, for the chip (and everything opened inside it).
-        -- Tapping the chosen one again goes back to the default order.
-        rows[#rows + 1] = {
-            label = (self.tab == "home") and "Library" or "Sort",
-            options = {
-                { id = "recent", label = "Recent" },
-                { id = "oldest", label = "Oldest" },
-                { id = "added_newest", label = "Newest added" },
-                { id = "added_oldest", label = "Oldest added" },
-            },
-            selected = self.view,
-            toggle = true,
-            on_pick = function(id) self:setView(id) end,
-        }
-    end
-    OptionSheet.show{ title = "View options", rows = rows }
 end
 
 function LibraryShelf:nextPage()
@@ -777,31 +915,148 @@ function LibraryShelf:buildAdjustButton()
     return { widget = btn, width = btn_w + more_w, more_widget = more, more_w = more_w }
 end
 
+-- The chips along the top. When they all fit they sit in one row, as before.
+-- When they do not (even at the small size) they are split in pages: a
+-- chevron right after the last chip of a page goes to the next page of
+-- chips, and from the second page on a chevron left at the start goes back.
 function LibraryShelf:buildChipBar()
     local adjust = self:buildAdjustButton()
     self.adjust = adjust
     self.chips = Chips.enabledList()
-    for _i, size in ipairs({ 15, 13 }) do
-        local row, chips, total = HorizontalGroup:new{}, {}, 0
+    self.chip_nav = {}
+    local gap = self.chip_gap
+    local avail = self.width - adjust.width - gap
+
+    local function build(size)
+        local all, total = {}, 0
         for i, t in ipairs(self.chips) do
-            if i > 1 then
-                row[#row + 1] = HorizontalSpan:new{ width = self.chip_gap }
-                total = total + self.chip_gap
-            end
             local chip = self:makeChip(t.label, (self.tab == t.id), function() self:setTab(t.id) end, size)
-            row[#row + 1] = chip.widget
-            chips[#chips + 1] = chip
-            total = total + chip.width
+            all[#all + 1] = chip
+            total = total + chip.width + (i > 1 and gap or 0)
         end
-        if total + adjust.width + self.chip_gap <= self.width or size == 13 then
-            -- the adjust button sits at the right edge
-            local fill = math.max(self.chip_gap, self.width - total - adjust.width)
-            row[#row + 1] = HorizontalSpan:new{ width = fill }
-            row[#row + 1] = adjust.widget
-            row[#row + 1] = adjust.more_widget
-            return row, chips
+        return all, total
+    end
+
+    local function finish(row, used)
+        -- the adjust button sits at the right edge
+        local fill = math.max(gap, self.width - used - adjust.width)
+        row[#row + 1] = HorizontalSpan:new{ width = fill }
+        row[#row + 1] = adjust.widget
+        row[#row + 1] = adjust.more_widget
+    end
+
+    -- Everything in one row, at the big size or else at the small one.
+    local all, total = build(15)
+    if total > avail then all, total = build(13) end
+    if total <= avail then
+        self.chip_page = 1
+        self.chip_pages = 1
+        local row = HorizontalGroup:new{}
+        for i, chip in ipairs(all) do
+            if i > 1 then row[#row + 1] = HorizontalSpan:new{ width = gap } end
+            row[#row + 1] = chip.widget
+        end
+        finish(row, total)
+        return row, all
+    end
+
+    -- Pages (small size). Each page keeps room for the chevrons it needs.
+    local function navButton(name)
+        local btn = FrameContainer:new{
+            bordersize = 0, margin = 0, padding = U(8), iconWidget(name, U(20), BLACK),
+        }
+        return { widget = btn, width = btn:getSize().w }
+    end
+    local prev_nav, next_nav = navButton("chevron-left"), navButton("chevron-right")
+    local pages, i, n = {}, 1, #all
+    while i <= n do
+        local budget = avail - ((#pages > 0) and (prev_nav.width + gap) or 0)
+        local need = 0
+        for j = i, n do need = need + all[j].width + (j > i and gap or 0) end
+        if need > budget then budget = budget - (next_nav.width + gap) end
+        local from, used = i, 0
+        while i <= n do
+            local w = all[i].width + (i > from and gap or 0)
+            if i > from and used + w > budget then break end
+            used = used + w
+            i = i + 1
+        end
+        pages[#pages + 1] = { from = from, to = i - 1 }
+    end
+
+    self.chip_pages = #pages
+
+    -- Which page: the one asked for with a chevron or a swipe, else the one
+    -- holding the chip that is open.
+    local page = self.chip_page
+    if not page or page > #pages then
+        page = 1
+        for idx, t in ipairs(self.chips) do
+            if t.id == self.tab then
+                for pi, pg in ipairs(pages) do
+                    if idx >= pg.from and idx <= pg.to then page = pi end
+                end
+            end
         end
     end
+    page = math.max(1, math.min(page, #pages))
+    self.chip_page = page
+
+    local row, visible, used = HorizontalGroup:new{}, {}, 0
+    if page > 1 then
+        row[#row + 1] = prev_nav.widget
+        used = used + prev_nav.width + gap
+        row[#row + 1] = HorizontalSpan:new{ width = gap }
+        prev_nav.onClick = function() self.chip_page = page - 1; self:rebuild() end
+        self.chip_nav.prev = prev_nav
+    end
+    local pg = pages[page]
+    for idx = pg.from, pg.to do
+        local chip = all[idx]
+        if idx > pg.from then
+            row[#row + 1] = HorizontalSpan:new{ width = gap }
+            used = used + gap
+        end
+        row[#row + 1] = chip.widget
+        used = used + chip.width
+        visible[#visible + 1] = chip
+    end
+    if page < #pages then
+        row[#row + 1] = HorizontalSpan:new{ width = gap }
+        row[#row + 1] = next_nav.widget
+        used = used + gap + next_nav.width
+        next_nav.onClick = function() self.chip_page = page + 1; self:rebuild() end
+        self.chip_nav.next = next_nav
+    end
+    finish(row, used)
+    return row, visible
+end
+
+-- The band the chips sit in, in screen coordinates (nil before first draw).
+function LibraryShelf:chipBarRect()
+    if not self.dimen then return nil end
+    return Geom:new{
+        x = self.dimen.x, y = self.dimen.y,
+        w = self.width, h = self.chip_pad + self.chip_h + self.chip_pad,
+    }
+end
+
+-- A swipe that starts on the chips turns their page, like the chevrons: left
+-- goes to the next page of chips, right to the previous one. Returns false
+-- when the chips fit in one row (the swipe is then left to the shelf).
+function LibraryShelf:swipeChips(direction)
+    local pages = self.chip_pages or 1
+    if pages <= 1 then return false end
+    local page = self.chip_page or 1
+    if direction == "west" and page < pages then
+        self.chip_page = page + 1
+    elseif direction == "east" and page > 1 then
+        self.chip_page = page - 1
+    else
+        return true  -- already at that end: nothing to do, but not a shelf swipe
+    end
+    self:rebuild()
+    return true
 end
 
 -- Back row, shown only inside a series, author or collection: a plain arrow
@@ -910,35 +1165,7 @@ end
 -- centred on the front cover (center_x, in the card); a name too long for that
 -- makes it grow to the right, over the second cover, up to the card's width.
 local function titlePill(name, count, cell_w, cell_h, center_x)
-    local inset = Screen:scaleBySize(6)
-    local pad_x, pad_y = Screen:scaleBySize(12), Screen:scaleBySize(4)
-    local border = 0
-    local gap = Screen:scaleBySize(6)
-    local num = TextWidget:new{
-        text = tostring(count), face = KoboldWidgets.face(12), fgcolor = Blitbuffer.COLOR_LIGHT_GRAY,
-    }
-    local max_w = cell_w - 2 * inset
-    local label = TextWidget:new{
-        text = flipArticle(name), face = KoboldWidgets.face(14), bold = true,
-        fgcolor = Blitbuffer.COLOR_WHITE,
-        max_width = math.max(Screen:scaleBySize(20),
-            max_w - 2 * pad_x - 2 * border - gap - num:getSize().w),
-    }
-    local row = HorizontalGroup:new{ align = "center", label, HorizontalSpan:new{ width = gap }, num }
-    local pill = FrameContainer:new{
-        bordersize = border, margin = 0, padding = 0,
-        padding_left = pad_x, padding_right = pad_x, padding_top = pad_y, padding_bottom = pad_y,
-        radius = math.floor((row:getSize().h + 2 * pad_y + 2 * border) / 2),
-        background = Blitbuffer.COLOR_BLACK,
-        row,
-    }
-    local ps = pill:getSize()
-    -- Centred on the front cover; when that would push it past the card's left
-    -- edge it stops at the edge and the rest of its width goes to the right.
-    local x = center_x - math.floor(ps.w / 2)
-    x = math.max(inset, math.min(x, cell_w - ps.w - inset))
-    pill.overlap_offset = { math.max(0, x), math.max(0, cell_h - ps.h - inset) }
-    return pill
+    return CoverBadge.titlePill(flipArticle(name), count, cell_w, cell_h, center_x)
 end
 
 -- `lying`: a folder with one single book shows it lying down, as wide as the
@@ -1016,25 +1243,52 @@ end
 -- air above them than the books have.
 function LibraryShelf:shelfMetrics(scale)
     scale = scale or 1
+    -- Columns come from setColumns(): 4 books or 3 cards in portrait on a
+    -- 6" e-reader, more on a wide screen or in landscape.
+    local nb, nc = self.cols_book or 4, self.cols_card or 3
     local base_gap = self.gap
-    local w4 = math.floor((self.width - base_gap * 3) / 4)
-    local bw = math.floor(w4 * scale)
+    local wb = math.floor((self.width - base_gap * (nb - 1)) / nb)
+    local bw = math.floor(wb * scale)
     local gap = base_gap
-    if scale < 1 then gap = math.floor((self.width - 4 * bw) / 3) end
-    local w3 = math.floor((self.width - gap * 2) / 3)
+    if scale < 1 then
+        -- The covers got smaller: work the columns out again from their real
+        -- width, so another one fits across when there is room for it, instead
+        -- of the width they freed turning into wide gaps between the books.
+        local fit = KoboldMetrics.fitRow(self.width, base_gap, bw, nb)
+        if fit > nb then
+            nb = fit
+            nc = math.max(2, math.floor(nb * 3 / 4))
+        end
+        gap = math.floor((self.width - nb * bw) / (nb - 1))
+    end
+    local wc = math.floor((self.width - gap * (nc - 1)) / nc)
     local book = { w = bw, h = math.floor(bw * COVER_RATIO) }
     return {
         gap = gap,
+        book_cols = nb, card_cols = nc,
         -- no caption row: the name is a pill on the stack of covers (makeCard)
-        card = { w = w3, h = book.h, cap_h = 0 },
+        card = { w = wc, h = book.h, cap_h = 0 },
         book = book,
     }
+end
+
+-- How many books (and cards) fit across a row of the shelf, from its width
+-- and the height `avail` it has: the covers aim for a set width, and get
+-- smaller, with more of them across, when the screen is too short for that.
+-- A shelf needs only one row (landscape has little height under the recent
+-- row and the chips; the page holds more covers across instead).
+function LibraryShelf:setColumns(avail)
+    local fixed = self.top_min + self.board_h + 2
+    local nb = KoboldMetrics.gridCols(self.width, self.gap, avail, 0, 0, fixed, 1)
+    self.cols_book = nb
+    -- 3 cards stand where 4 books do
+    self.cols_card = math.max(2, math.floor(nb * 3 / 4))
 end
 
 -- Grid: how much to shrink the covers so one more row fits on a page, worked
 -- out from the height of a row of books for every chip (cards use the same row
 -- height), so the covers are the same size and a page has the same number of
--- rows in all of them. The columns are fixed (4 books, 3 cards), so covers
+-- rows in all of them. The columns come from setColumns() and the covers
 -- cannot grow: they shrink by
 -- up to 20% when that makes the rows fill the page, and up to 45% when that is
 -- what it takes for a second row to fit (the list view fits two rows easily, so
@@ -1048,7 +1302,24 @@ function LibraryShelf:fitScale(entries, avail)
     -- 2 px of slack per row, so rounding never pushes the last row off the page
     local sc = (avail / rows - fixed - 2) / flex
     local min_scale = (rows == 2) and 0.55 or 0.80
-    if sc >= min_scale and sc < 1 then return sc end
+    if sc >= min_scale and sc < 1 then
+        -- If those smaller covers leave wide gaps and are not far from the size
+        -- that lets one more column in, take that size: the covers are only a
+        -- little smaller (the rows still fit) and the gaps stay tight.
+        local nb = self.cols_book or 4
+        if nb > 1 then
+            local base_gap = self.gap
+            local wb = math.floor((self.width - base_gap * (nb - 1)) / nb)
+            local bw = math.floor(wb * sc)
+            local gap_now = (self.width - nb * bw) / (nb - 1)
+            if gap_now > base_gap * 1.8 then
+                local bw_next = math.floor((self.width - base_gap * nb) / (nb + 1))
+                local sn = bw_next / wb
+                if sn >= 0.70 and sn < sc then return sn end
+            end
+        end
+        return sc
+    end
     return 1
 end
 
@@ -1071,6 +1342,7 @@ local function readState(file)
     local ok, info = pcall(KoboldLibrary.getDocInfoCached, file)
     info = (ok and type(info) == "table") and info or {}
     local pct = tonumber(info.percent)
+    if info.status == "abandoned" then return pct, false, true end   -- On hold
     if info.status == "complete" or (pct and pct >= 1) then return 1, true end
     if pct and pct > 0 then return pct, false end
     return nil, false
@@ -1082,6 +1354,7 @@ end
 -- the space left on a page becomes empty shelves, and what remains is shared
 -- out as air above each row.
 function LibraryShelf:buildShelves(entries, avail)
+    self:setColumns(avail)
     local m = self:shelfMetrics(self:fitScale(entries, avail))
     local gap = m.gap
     local boards = Chips.shelvesOn(self.tab)   -- false: same layout, boards not drawn
@@ -1139,9 +1412,9 @@ function LibraryShelf:buildShelves(entries, avail)
         for _i, e in ipairs(last.items) do if e.kind ~= "card" then only_cards = false end end
         local pad
         if only_cards then
-            pad = { items = {}, pad_n = 3, pad_w = m.card.w, cell_h = m.card.h, cap_h = m.card.cap_h }
+            pad = { items = {}, pad_n = m.card_cols, pad_w = m.card.w, cell_h = m.card.h, cap_h = m.card.cap_h }
         else
-            pad = { items = {}, pad_n = 4, pad_w = m.book.w, cell_h = m.book.h, cap_h = 0 }
+            pad = { items = {}, pad_n = m.book_cols, pad_w = m.book.w, cell_h = m.book.h, cap_h = 0 }
         end
         pad.h = self.top_min + pad.cell_h + self.board_h + pad.cap_h
         while boards and avail - used >= pad.h do
@@ -1185,7 +1458,7 @@ function LibraryShelf:buildShelves(entries, avail)
                 slot = slot + 1
                 self.page_items[slot], self.page_kinds[slot] = e.data, "books"
                 self.item_rects[slot] = { x = x, y = y + top_gap + (r.cell_h - sh), w = sw, h = sh }
-                local pct, done = readState(e.data)
+                local pct, done, onhold = readState(e.data)
                 cells[#cells + 1] = OverlapGroup:new{
                     dimen = Geom:new{ w = w, h = r.cell_h },
                     VerticalGroup:new{
@@ -1200,7 +1473,7 @@ function LibraryShelf:buildShelves(entries, avail)
                     CoverBadge.Overlay:new{
                         w = w, h = r.cell_h,
                         rect = { x = 0, y = r.cell_h - sh, w = sw, h = sh },
-                        badge = CoverBadge.make(pct, done),
+                        badge = CoverBadge.make(pct, done, onhold),
                         path = e.data,
                     },
                 }
@@ -1300,8 +1573,25 @@ function LibraryShelf:buildList(entries, avail)
                 texts[#texts + 1] = VerticalSpan:new{ width = gap }
                 texts[#texts + 1] = grey(m.authors[1], 14)
             end
-            local pct, done = readState(file)
-            if done then
+            local pct, done, onhold = readState(file)
+            if onhold then
+                -- On hold: the same tag as Read, then how far the book got
+                -- (no bar).
+                texts[#texts + 1] = VerticalSpan:new{ width = gap }
+                local hold = HorizontalGroup:new{
+                    align = "center",
+                    FrameContainer:new{
+                        bordersize = 0, margin = 0, radius = U(7), background = C_TAG,
+                        padding_left = U(12), padding_right = U(12), padding_top = U(3), padding_bottom = U(3),
+                        TextWidget:new{ text = "On hold", face = KoboldWidgets.face(13), fgcolor = BLACK },
+                    },
+                }
+                if pct and pct > 0 then
+                    hold[#hold + 1] = HorizontalSpan:new{ width = U(10) }
+                    hold[#hold + 1] = grey(math.floor(pct * 100 + 0.5) .. "%", 13)
+                end
+                texts[#texts + 1] = hold
+            elseif done then
                 texts[#texts + 1] = VerticalSpan:new{ width = gap }
                 texts[#texts + 1] = FrameContainer:new{
                     bordersize = 0, margin = 0, radius = U(7), background = C_TAG,
@@ -1398,12 +1688,16 @@ function LibraryShelf:rebuild()
             msg = "No authors found yet. Open a book once so its info gets read."
         elseif self.tab == "collections" then
             msg = "No collections yet. Make one from a book's menu in the file browser."
+        elseif self.tab == "genres" then
+            msg = "No genres found. They come from the keywords of your books."
         elseif self.tab == "favorites" then
             msg = "No books in Favorites yet. Add one from a book's menu in the file browser."
         elseif self.tab == "tbr" then
             msg = "No books in To be read yet. Add one from a book's menu in the file browser."
         elseif customPath(self.tab) then
             msg = "No books in this folder."
+        elseif customCollection(self.tab) then
+            msg = "No books in this collection yet. Add one from a book's menu in the file browser."
         end
         body = VerticalGroup:new{
             align = "left",
@@ -1435,6 +1729,40 @@ function LibraryShelf:rebuild()
     end
 end
 
+-- ── More menu ──────────────────────────────────────────────────────────────
+-- The more button of Home: Refresh library and Settings (the same two rows as
+-- the More menu of Library's Books tab). `anchor` is the button's rectangle.
+function LibraryShelf:openMoreMenu(anchor)
+    local _ = require("gettext")
+    local items = {
+        { text = _("Refresh library"), icon = { "refresh-cw", "undo" },
+          action = function() self:refreshLibrary() end },
+        { text = _("Settings"), icon = { "settings", "settings-2" },
+          action = function() require("kobold.ui.settings").show() end },
+    }
+    require("kobold.ui.book_menu").show{
+        screen = self.home, anchor = anchor, align = "right", items = items,
+    }
+end
+
+-- Refresh library: the disk is scanned again and everything Kobold remembered
+-- about the books (titles, authors, languages, genres, KOReader's metadata
+-- changes) is forgotten and read anew; then Home is drawn again. The chip,
+-- view and page of the shelf stay as they were.
+function LibraryShelf:refreshLibrary()
+    local home = self.home
+    if not home then return end
+    local _ = require("gettext")
+    local Toast = require("kobold.ui.toast")
+    local working = Toast.working(_("Refreshing…"))
+    KoboldLibrary.forgetAll()
+    LibraryShelf.invalidateMeta()
+    home:loadData()
+    home:refreshCovers()
+    Toast.dismiss(working)
+    Toast.show(_("Library refreshed."))
+end
+
 -- ── Touch ──────────────────────────────────────────────────────────────────
 -- A tap zone that can never fire: parks an unused name off screen so a zone
 -- left over from an earlier layout cannot answer taps.
@@ -1460,6 +1788,17 @@ function LibraryShelf:registerTaps()
         end
     end
 
+    -- The chevrons that page through the chips, when there are more than fit.
+    for _i, which in ipairs({ "prev", "next" }) do
+        local nav = self.chip_nav and self.chip_nav[which]
+        local d = nav and nav.widget.dimen
+        if d then
+            KoboldTaps.add(home, "shelf_chip_" .. which, d.x, d.y, d.w, d.h, nav.onClick)
+        else
+            park(home, "shelf_chip_" .. which)
+        end
+    end
+
     local ad = self.adjust and self.adjust.widget.dimen
     if ad then
         KoboldTaps.add(home, "shelf_adjust", ad.x, ad.y, ad.w, ad.h, function() self:openLayoutMenu(ad) end)
@@ -1467,11 +1806,11 @@ function LibraryShelf:registerTaps()
         park(home, "shelf_adjust")
     end
 
-    -- The more button opens Settings (a menu comes later).
+    -- The more button opens a small menu: Refresh library and Settings.
     local mr = self.adjust and self.adjust.more_widget and self.adjust.more_widget.dimen
     if mr then
         KoboldTaps.add(home, "shelf_more", mr.x, mr.y, mr.w, mr.h, function()
-            require("kobold.ui.settings").show()
+            self:openMoreMenu(Geom:new{ x = mr.x, y = mr.y, w = mr.w, h = mr.h })
         end)
     else
         park(home, "shelf_more")

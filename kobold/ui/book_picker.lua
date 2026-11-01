@@ -332,6 +332,13 @@ function KoboldBookPicker:init()
             TapPicker = { GestureRange:new{ ges = "tap", range = self.dimen } },
             SwipePicker = { GestureRange:new{ ges = "swipe", range = self.dimen } },
         }
+        -- Hold the side bar and slide the finger: the bar and the page follow it.
+        KoboldWidgets.registerBarDrag(self, {
+            rect = function() return self.bar_rect end,
+            bar  = function() return self.bar end,
+            top  = function() return self.bar_rect.y end,
+            goTo = function(page) self:goToPage(page) end,
+        })
     end
 end
 

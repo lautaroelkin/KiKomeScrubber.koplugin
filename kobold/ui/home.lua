@@ -24,6 +24,7 @@ local Rounded        = require("kobold.ui.rounded")
 local CoverBadge     = require("kobold.ui.cover_badge")
 local Chips          = require("kobold.data.chips")
 local KoboldNav       = require("kobold.ui.nav")
+local KoboldMetrics   = require("kobold.ui.metrics")
 local KoboldReader    = require("kobold.ui.reader")
 local KoboldTaps      = require("kobold.ui.taps")
 local KoboldWidgets   = require("kobold.ui.widgets")
@@ -115,15 +116,17 @@ function KoboldHome:readStamp()
 end
 
 -- Title of each library book by file, for the captions under the reading row.
+-- Looked up when a caption is drawn (from the cover browser's data, or the
+-- file name), not built for the whole library at every refresh.
 local function bookTitles()
-    local map = {}
-    local ok, books = pcall(function() return require("kobold.data.mybooks").getBooks() end)
-    if ok and type(books) == "table" then
-        for _i, b in ipairs(books) do
-            if b.file and b.title then map[b.file] = b.title end
+    return setmetatable({}, { __index = function(t, file)
+        local ok, title = pcall(KoboldLibrary.getTitle, file)
+        if ok and type(title) == "string" and title ~= "" then
+            rawset(t, file, title)
+            return title
         end
-    end
-    return map
+        return nil
+    end })
 end
 
 function KoboldHome:loadData()
@@ -147,7 +150,16 @@ function KoboldHome:loadData()
     KoboldCovers.ensure(self.all_books)
 end
 
+-- The screen was rotated or resized: build it again at the new size. The
+-- shelf keeps its chip, view and page (build reads them from the old shelf).
+function KoboldHome:relayout()
+    self.dimen.w, self.dimen.h = Screen:getWidth(), Screen:getHeight()
+    self:build()
+end
+
 function KoboldHome:paintTo(bb, x, y)
+    -- Rotated (or resized) since it was built: lay it out again first.
+    if KoboldMetrics.sizeChanged(self) then self:relayout() end
     if self.read_stamp and self:readStamp() ~= self.read_stamp then
         self.reading_page = 1
         self:loadData()
@@ -174,6 +186,7 @@ function KoboldHome:onKoboldReturn()
 end
 
 function KoboldHome:refreshCovers()
+    LibraryShelf.forgetMisses()
     self:build()
     UIManager:setDirty(self, "ui")
 end
@@ -181,14 +194,17 @@ end
 function KoboldHome:build()
     local W, H = Screen:getWidth(), Screen:getHeight()
     local data      = self.data
-    local margin    = Screen:scaleBySize(20)
+    -- Margins and status bar come from metrics.lua, the same as Library and
+    -- Settings, so the status bar does not move between them.
+    local bar       = KoboldMetrics.statusBar()
+    local margin    = bar.margin
     local gap       = Screen:scaleBySize(20)
     local content_w = W - 2 * margin
 
-    -- The spacing Home always had; on a short screen the grid shrinks instead
-    -- (see fitScale in library_shelf.lua).
-    local margin_top    = Screen:scaleBySize(20)   -- screen edge to the status bar
-    local status_h      = Screen:scaleBySize(30)
+    -- On a short screen the grid shrinks instead (see fitScale in
+    -- library_shelf.lua).
+    local margin_top    = bar.top                  -- screen edge to the status bar
+    local status_h      = bar.h
     local status_gap    = Screen:scaleBySize(16)   -- status bar to the recent row
     local shelf_gap     = Screen:scaleBySize(16)   -- recent row to the shelf
     local tight_gap     = Screen:scaleBySize(4)    -- cover to its title
@@ -198,13 +214,23 @@ function KoboldHome:build()
     local caption_h     = line_h + Screen:scaleBySize(2)
     local nav_h         = KoboldNav.height()
 
-    -- The recent row is a little smaller: 3.7 covers across, not 3.4.
+    -- The recent row is a little smaller: 3.7 covers across, not 3.4. On a
+    -- short screen (landscape) that would make the covers taller than the
+    -- screen, so the row takes at most about a third of the height under the
+    -- status bar, and more covers show across instead.
+    local room_h = H - nav_h - (margin_top + status_h + status_gap) - Screen:scaleBySize(10)
     local top_w = math.floor((content_w - 3 * gap) / 3.7)
+    local max_top_h = math.floor(room_h * 0.36) - tight_gap - caption_h
+    top_w = math.min(top_w, math.floor(max_top_h / COVER_RATIO))
+    top_w = math.max(top_w, Screen:scaleBySize(60))
     local top_h = math.floor(top_w * COVER_RATIO)
 
     local n_cover    = math.max(#(data.reading or {}), 4)
     local step       = top_w + gap
-    local page_step  = 3 * step
+    -- A swipe moves the covers that were fully showing: 3 in portrait (as it
+    -- always was), more when more fit across.
+    local per_view   = math.max(1, math.floor((content_w + gap) / step))
+    local page_step  = per_view * step
     local max_offset = math.max(0, n_cover * step - gap - content_w)
     local pages      = max_offset > 0 and (math.ceil(max_offset / page_step) + 1) or 1
     self.reading_pages = pages
@@ -253,7 +279,7 @@ function KoboldHome:build()
         width = W, bordersize = 0, padding = margin, padding_top = margin_top, padding_bottom = 0,
         VerticalGroup:new{
             align = "left",
-            KoboldWidgets.statusBarFrame(self, margin, content_w, status_h, margin_top),
+            KoboldWidgets.sharedStatusBar(self),
             VerticalSpan:new{ width = status_gap },
             self:buildReadingSection(data.reading, L),
             VerticalSpan:new{ width = shelf_gap },
@@ -318,6 +344,7 @@ local function readState(item)
     local ok, info = pcall(KoboldLibrary.getDocInfoCached, item.file)
     info = (ok and type(info) == "table") and info or {}
     local pct = tonumber(info.percent) or tonumber(item.percent)
+    if info.status == "abandoned" then return pct, false, true end   -- On hold
     if info.status == "complete" or (pct and pct >= 1) then return 1, true end
     if pct and pct > 0 then return pct, false end
     return nil, false
@@ -336,8 +363,8 @@ function KoboldHome:buildReadingSection(reading, L)
         -- The badge in the cover's corner: the percentage read, or "Read".
         local badge
         if item and item.file then
-            local pct, done = readState(item)
-            badge = CoverBadge.make(pct, done)
+            local pct, done, onhold = readState(item)
+            badge = CoverBadge.make(pct, done, onhold)
         end
         cells[i] = VerticalGroup:new{
             align = "left",
@@ -398,6 +425,12 @@ end
 function KoboldHome:onSwipeShelf(_, ges)
     if not self.library_shelf or not self.shelf_rect then return false end
     if not ges.pos:intersectWith(self.shelf_rect) then return false end
+    -- A swipe that starts on the chips turns the page of chips.
+    local chips = self.library_shelf:chipBarRect()
+    if chips and (ges.direction == "west" or ges.direction == "east")
+        and ges.pos:intersectWith(chips) and self.library_shelf:swipeChips(ges.direction) then
+        return true
+    end
     if ges.direction == "west" then
         self.library_shelf:nextPage()
     elseif ges.direction == "east" then
@@ -409,7 +442,7 @@ function KoboldHome:onSwipeShelf(_, ges)
 end
 
 function KoboldHome:onClose()
-    UIManager:close(self)
+    require("kobold.ui.park").closeScreen(self)
     return true
 end
 

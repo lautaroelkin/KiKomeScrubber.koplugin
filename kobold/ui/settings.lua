@@ -22,12 +22,14 @@
 --     -- toggle:  setting = "transition",        tap flips the pref (true / nil);
 --     --          default = false                drawn with the same on / off glyph as scrubber_settings
 --     -- action:  callback = function() end      tap runs it
+--     added    = true,                            a small tick after the name: already added (Add a chip)
 --     -- radio:   checked = bool,                a choice inside a choice page: draws a check,
 --     --          on_pick = function() end       tap runs on_pick and goes back one level
 --   }
 -- Pages: "root" (the main screen), "general" (opening panel, corners, outline,
 -- shelves and the status bar), "advanced" and one choice page per setting
--- (battery, library_list_rows, library_grid_rows), and "library".
+-- (battery, library_list_rows, library_grid_rows), "library", "library_tabs"
+-- (the Library's tabs: order and on / off) and "library_tab:collections".
 -- Everything stays inside this window; no KOReader menus.
 
 local Blitbuffer      = require("ffi/blitbuffer")
@@ -40,6 +42,7 @@ local Geom            = require("ui/geometry")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan  = require("ui/widget/horizontalspan")
 local InfoMessage     = require("ui/widget/infomessage")
+local Toast           = require("kobold.ui.toast")
 local InputContainer  = require("ui/widget/container/inputcontainer")
 local LeftContainer   = require("ui/widget/container/leftcontainer")
 local LineWidget      = require("ui/widget/linewidget")
@@ -55,7 +58,9 @@ local KoboldCovers    = require("kobold.data.covers")
 local KoboldLibrary   = require("kobold.data.library")
 local KoboldMeta      = require("kobold.meta")
 local KoboldPrefs     = require("kobold.data.prefs")
+local KoboldTabs      = require("kobold.data.tabs")
 local KoboldEditors   = require("kobold.ui.editors")
+local KoboldMetrics   = require("kobold.ui.metrics")
 local KoboldTaps      = require("kobold.ui.taps")
 local KoboldWidgets   = require("kobold.ui.widgets")
 
@@ -165,7 +170,7 @@ local function prepareCovers()
     else
         text = string.format(_("Preparing %d covers in the background."), n)
     end
-    UIManager:show(InfoMessage:new{ text = text })
+    Toast.show(text, { timeout = 4 })
 end
 
 ---------------------------------------------------------------------------
@@ -216,7 +221,7 @@ function KoboldSettings:getPageDefinition(page_id)
                 { section = _("Library") },
                 {
                     text = _("Library options"), icon = { "library.svg", "grid.svg" }, kind = "submenu", target = "library",
-                    desc = _("How the Library (My Books) lays out its books: rows per page in list and in grid view."),
+                    desc = _("The Library (My Books): its tabs (order, on / off) and how it lays out its books, in list and in grid view."),
                 },
                 { section = _("App") },
                 {
@@ -246,6 +251,11 @@ function KoboldSettings:getPageDefinition(page_id)
                     desc = _("An \"Opening\" pill on the book's cover and a small \"Closing\" pill instead of KOReader's messages. Off: the same as KOReader."),
                 },
                 {
+                    text = _("Instant exit from books"), icon = "zap.svg", kind = "toggle",
+                    setting = "hot_park", default = true,
+                    desc = _("Leaving a book shows KiKome at once; the book is really closed later, when you stop touching the device (or when KOReader's file browser is needed). Reopening the same book is instant too. Off: the book is closed first, as KOReader does."),
+                },
+                {
                     text = _("Rounded corners"), icon = "square.svg", kind = "toggle",
                     setting = "rounded_corners", default = true,
                     desc = _("Round the corners of the covers on Home and in the library, folders included. Off: square corners."),
@@ -257,7 +267,7 @@ function KoboldSettings:getPageDefinition(page_id)
                 },
                 { section = _("Status bar") },
                 {
-                    text = _("Battery"), icon = "zap.svg", kind = "submenu", target = "battery",
+                    text = _("Battery"), icon = "battery-medium.svg", kind = "submenu", target = "battery",
                     value = BATTERY_LABELS[KoboldPrefs.get("battery")] or BATTERY_LABELS.fill,
                     desc = _("Show the charge as a fill inside the icon, or as a number."),
                 },
@@ -274,17 +284,59 @@ function KoboldSettings:getPageDefinition(page_id)
         return {
             title = _("Library"),
             items = {
+                {
+                    text = _("Tabs"), icon = { "my-books.svg", "grid.svg" }, kind = "submenu", target = "library_tabs",
+                    desc = _("The tabs along the top of the Library: Books, Authors, Series, Collections, Genres and Files. Put them in the order you like and turn off the ones you do not use."),
+                },
                 { section = _("View: list") },
                 {
                     text = _("Books per page"), icon = { "list.svg", "grid.svg" }, kind = "submenu",
                     target = "library_list_rows", value = rowsValue("library_list_rows"),
-                    desc = _("Rows on lists with covers: Books, Series, and the books of an author, series or collection. Automatic fits as many as the screen allows, as Home does."),
+                    desc = _("Rows on lists with covers: Books, Series, Genres, and the books of an author, series, collection or genre. Automatic fits as many as the screen allows, as Home does."),
                 },
                 { section = _("View: grid") },
                 {
                     text = _("Rows per page"), icon = "grid.svg", kind = "submenu",
                     target = "library_grid_rows", value = rowsValue("library_grid_rows"),
                     desc = _("Rows of covers in grid view. Automatic fits as many as the screen allows, as Home does."),
+                },
+            },
+        }
+    end
+
+    -- The Library's tabs: switch, name and up / down arrows, as the chips of
+    -- Shelves. Collections opens its own options.
+    if page_id == "library_tabs" then
+        local tabs = KoboldTabs.list()
+        local items = { { section = _("Tabs") } }
+        for i, t in ipairs(tabs) do
+            items[#items + 1] = {
+                kind = "chip", source = "tabs", chip_id = t.id, text = t.label,
+                enabled = t.enabled, has_page = (t.id == "collections"),
+                can_up = (i > 1), can_down = (i < #tabs),
+            }
+        end
+        return { title = _("Tabs"), items = items }
+    end
+
+    -- The Collections tab of the Library: whether Favorites and To be read are
+    -- listed in it. (Home has its own switches, in Shelves.)
+    if page_id == "library_tab:collections" then
+        return {
+            title = _("Collections"),
+            items = {
+                { section = _("Show in Collections") },
+                {
+                    text = _("To be read"), icon = "book-marked.svg", kind = "toggle",
+                    get = function() return KoboldChips.libraryCollectionShown("tbr") end,
+                    set = function(on) KoboldChips.setLibraryCollectionShown("tbr", on) end,
+                    desc = _("List the To be read collection in the Library's Collections. Off: it is hidden there. Home has its own switch in Shelves."),
+                },
+                {
+                    text = _("Favorites"), icon = "book-marked.svg", kind = "toggle",
+                    get = function() return KoboldChips.libraryCollectionShown("favorites") end,
+                    set = function(on) KoboldChips.setLibraryCollectionShown("favorites", on) end,
+                    desc = _("List the Favorites collection in the Library's Collections. Off: it is hidden there. Home has its own switch in Shelves."),
                 },
             },
         }
@@ -306,7 +358,7 @@ function KoboldSettings:getPageDefinition(page_id)
                         -- error instead of taking KOReader down.
                         local ok, err = pcall(function() require("kobold.ui.about").show() end)
                         if not ok then
-                            UIManager:show(InfoMessage:new{ text = tostring(err) })
+                            Toast.error(tostring(err))
                         end
                     end,
                 },
@@ -338,7 +390,7 @@ function KoboldSettings:getPageDefinition(page_id)
                         -- instead of taking KOReader down.
                         local ok, err = pcall(function() require("kobold.updater").check() end)
                         if not ok then
-                            UIManager:show(InfoMessage:new{ text = tostring(err) })
+                            Toast.error(tostring(err))
                         end
                     end,
                 },
@@ -353,18 +405,16 @@ function KoboldSettings:getPageDefinition(page_id)
         for i, c in ipairs(chips) do
             items[#items + 1] = {
                 kind = "chip", chip_id = c.id, text = c.label,
-                enabled = c.enabled, is_custom = (c.kind == "folder"),
+                enabled = c.enabled, is_custom = (c.kind == "folder" or c.kind == "collection"),
                 can_up = (i > 1), can_down = (i < #chips),
             }
         end
         items[#items + 1] = {
             text = _("Add a chip"), icon = "plus.svg", kind = "action",
-            desc = _("A chip for one folder of your books. The chip takes the folder's name."),
+            desc = _("A chip for one folder of your books, or for one collection. The chip takes its name."),
             callback = function()
                 if KoboldChips.isFull() then
-                    UIManager:show(InfoMessage:new{
-                        text = string.format(_("Maximum of %d chips on. Turn one off first."), KoboldChips.MAX),
-                    })
+                    Toast.error(string.format(_("Maximum of %d chips on. Turn one off first."), KoboldChips.MAX))
                     return
                 end
                 self:pushView("chip_folders:" .. KoboldChips.rootDir())
@@ -397,20 +447,22 @@ function KoboldSettings:getPageDefinition(page_id)
                 text = _("To be read"), kind = "toggle",
                 get = function() return KoboldChips.collectionShown("tbr") end,
                 set = function(on) KoboldChips.setCollectionShown("tbr", on) end,
-                desc = _("List the To be read collection here. Off: it is hidden from Collections."),
+                desc = _("List the To be read collection here, on Home. Off: it is hidden from this Collections. The Library has its own switch in Library options > Tabs > Collections."),
             }
             items[#items + 1] = {
                 text = _("Favorites"), kind = "toggle",
                 get = function() return KoboldChips.collectionShown("favorites") end,
                 set = function(on) KoboldChips.setCollectionShown("favorites", on) end,
-                desc = _("List the Favorites collection here. Off: it is hidden from Collections."),
+                desc = _("List the Favorites collection here, on Home. Off: it is hidden from this Collections. The Library has its own switch in Library options > Tabs > Collections."),
             }
         end
-        if chip.kind == "folder" then
+        if chip.kind == "folder" or chip.kind == "collection" then
             items[#items + 1] = { section = _("Chip") }
             items[#items + 1] = {
                 text = _("Remove chip"), icon = "trash-2.svg", kind = "action",
-                desc = _("Takes this folder's chip off the shelves. The folder and its books stay."),
+                desc = (chip.kind == "folder")
+                    and _("Takes this folder's chip off the shelves. The folder and its books stay.")
+                    or _("Takes this collection's chip off the shelves. The collection and its books stay."),
                 callback = function()
                     KoboldEditors.confirm(string.format(_("Remove \"%s\" from the shelves?"), chip.label), _("Remove"), function()
                         KoboldChips.remove(id)
@@ -434,28 +486,63 @@ function KoboldSettings:getPageDefinition(page_id)
                 if b.file then files[#files + 1] = b.file end
             end
         end
+        local at_root = (path == root or path == "")
+        -- Folders and collections that already have a chip get a tick.
+        local has_chip = {}
+        for _i, c in ipairs(KoboldChips.list()) do has_chip[c.id] = true end
         local items = {}
+        -- From the first page the chips are split in two sections: Folders and
+        -- Collections. Inside a folder there are only its folders.
+        if at_root then items[#items + 1] = { section = _("Folders") } end
+        local n_folders = 0
         for _i, name in ipairs(KoboldChips.subfolders(files, path)) do
+            n_folders = n_folders + 1
             items[#items + 1] = {
                 text = name, icon = "folder.svg", kind = "submenu",
                 target = "chip_folders:" .. path .. "/" .. name,
+                added = has_chip["folder:" .. path .. "/" .. name],
             }
         end
-        if #items == 0 then
+        if n_folders == 0 then
             items[#items + 1] = { text = _("No folders here."), kind = "action", disabled = true }
         end
+        if at_root then
+            items[#items + 1] = { section = _("Collections") }
+            local names = KoboldChips.collectionNames()
+            for _i, cname in ipairs(names) do
+                items[#items + 1] = {
+                    text = cname, icon = "book-marked.svg", kind = "action",
+                    added = has_chip["collection:" .. cname],
+                    desc = _("Adds a chip with this collection's name, showing its books."),
+                    callback = function()
+                        local ok_add, why = KoboldChips.addCollection(cname)
+                        if not ok_add then
+                            local msg = (why == "dup") and _("That collection already has a chip.")
+                                or string.format(_("Maximum of %d chips on. Turn one off first."), KoboldChips.MAX)
+                            Toast.error(msg)
+                            return
+                        end
+                        self:backToShelves()
+                    end,
+                }
+            end
+            if #names == 0 then
+                items[#items + 1] = { text = _("No collections to add."), kind = "action", disabled = true }
+            end
+        end
         -- Only once a folder is open: the folder you are in is the one added.
-        if path ~= root and path ~= "" then
+        if not at_root then
             items[#items + 1] = { section = _("This folder") }
             items[#items + 1] = {
                 text = _("Add this folder as a chip"), icon = "plus.svg", kind = "action",
+                added = has_chip["folder:" .. path],
                 desc = _("Adds a chip with this folder's name, showing the books under it."),
                 callback = function()
                     local ok_add, why = KoboldChips.add(path)
                     if not ok_add then
                         local msg = (why == "dup") and _("That folder already has a chip.")
                             or string.format(_("Maximum of %d chips on. Turn one off first."), KoboldChips.MAX)
-                        UIManager:show(InfoMessage:new{ text = msg })
+                        Toast.error(msg)
                         return
                     end
                     self:backToShelves()
@@ -463,7 +550,7 @@ function KoboldSettings:getPageDefinition(page_id)
             }
         end
         return {
-            title = (path == root or path == "") and _("Choose a folder") or path:match("([^/]+)$"),
+            title = at_root and _("Add a chip") or path:match("([^/]+)$"),
             items = items,
         }
     end
@@ -526,7 +613,7 @@ function KoboldSettings:restartKobold()
     UIManager:nextTick(function()
         local ok, err = pcall(function() require("kobold.ui.router").show("home") end)
         if not ok then
-            UIManager:show(InfoMessage:new{ text = _("Kobold failed to restart.") .. "\n" .. tostring(err) })
+            Toast.error(_("Kobold failed to restart.") .. "\n" .. tostring(err))
         end
     end)
 end
@@ -632,7 +719,8 @@ local function buildChipRow(item, w)
         truncate_with_ellipsis = true,
     }
     -- A small, soft chevron right after the name: the chip opens its own options.
-    local chevron = loadSvg("chevron-right.svg", chev_sz, Blitbuffer.COLOR_DARK_GRAY)
+    -- (a Library tab without options of its own has no chevron)
+    local chevron = (item.has_page ~= false) and loadSvg("chevron-right.svg", chev_sz, Blitbuffer.COLOR_DARK_GRAY) or nil
 
     local function arrow(file, fallback)
         local icon = loadSvg(file, icon_sz, Blitbuffer.COLOR_BLACK)
@@ -742,10 +830,25 @@ local function buildRow(item, w)
         lead_w = icon_sz + icon_gap
     end
     local text_w = w - lead_w - (right_w > 0 and right_w + gap or 0)
+    -- A small grey tick right after the name: that folder / collection
+    -- already has a chip.
+    local tick, tick_w
+    if item.added then
+        tick = TextWidget:new{
+            text = "✓", face = Font:getFace("cfont", scale(15)),
+            fgcolor = item.disabled and Blitbuffer.COLOR_DARK_GRAY or KoboldWidgets.subtitleColor(),
+        }
+        tick_w = tick:getSize().w + scale(6)
+        text_w = text_w - tick_w
+    end
     left[#left + 1] = TextWidget:new{
         text = item.text, face = KoboldWidgets.face(18),
         bold = item.bold or false, fgcolor = color, max_width = text_w,
     }
+    if tick then
+        left[#left + 1] = HorizontalSpan:new{ width = scale(6) }
+        left[#left + 1] = tick
+    end
 
     local group = OverlapGroup:new{
         dimen = Geom:new{ w = w, h = row_h },
@@ -770,9 +873,10 @@ end
 
 function KoboldSettings:build()
     local W, H = self.dimen.w, self.dimen.h
-    local margin    = scale(30)
+    local bar       = KoboldMetrics.statusBar()
+    local margin    = bar.margin
     local content_w = W - 2 * margin
-    local status_h  = scale(40)
+    local status_h  = bar.h
     local header_h  = scale(64)
     local line_h    = scale(3)
     local title_sz  = scale(26)
@@ -915,24 +1019,29 @@ end
 function KoboldSettings:activate(item, zone)
     local done = function() self:refresh() end
     if item.kind == "chip" then
+        -- The same rows serve the chips of Home (Shelves) and the Library's tabs.
+        local is_tab = (item.source == "tabs")
+        local list = is_tab and KoboldTabs or KoboldChips
         if zone == "toggle" then
-            local ok, why = KoboldChips.setEnabled(item.chip_id, not item.enabled)
+            local ok, why = list.setEnabled(item.chip_id, not item.enabled)
             if not ok and why == "last" then
-                UIManager:show(InfoMessage:new{ text = _("At least one chip must stay on.") })
+                Toast.error(is_tab and _("At least one tab must stay on.") or _("At least one chip must stay on."))
             elseif not ok and why == "max" then
-                UIManager:show(InfoMessage:new{
-                    text = string.format(_("Maximum of %d chips on. Turn one off first."), KoboldChips.MAX),
-                })
+                Toast.error(string.format(_("Maximum of %d chips on. Turn one off first."), KoboldChips.MAX))
             end
             done()
         elseif zone == "up" and item.can_up then
-            KoboldChips.move(item.chip_id, -1)
+            list.move(item.chip_id, -1)
             done()
         elseif zone == "down" and item.can_down then
-            KoboldChips.move(item.chip_id, 1)
+            list.move(item.chip_id, 1)
             done()
         elseif zone == "text" then
-            self:pushView("chip:" .. item.chip_id)
+            if not is_tab then
+                self:pushView("chip:" .. item.chip_id)
+            elseif item.has_page then
+                self:pushView("library_tab:" .. item.chip_id)
+            end
         end
     elseif item.kind == "submenu" then
         if item.target then self:pushView(item.target) end
@@ -976,8 +1085,7 @@ function KoboldSettings:init()
     self.start_revision = KoboldPrefs.revision()
 
     -- The shared status bar, made once and reused on every redraw.
-    local margin = scale(30)
-    self.status_bar = KoboldWidgets.statusBarFrame(self, margin, W - 2 * margin, scale(40))
+    self.status_bar = KoboldWidgets.sharedStatusBar(self)
     self[1] = self:build()
 
     -- One tap zone for the whole screen; the handler finds the button or row.
@@ -1035,6 +1143,28 @@ function KoboldSettings:init()
             end,
         },
     })
+
+    -- Touch the side bar and slide the finger: the bar and the page follow it.
+    KoboldWidgets.registerBarDrag(self, {
+        rect = function() return self.pages > 1 and self.bar_rect or nil end,
+        bar  = function() return self.bar end,
+        top  = function() return self.bar_rect.y end,
+        goTo = function(page) self:goToPage(page) end,
+    })
+end
+
+-- The screen was rotated or resized: build the page again at the new size.
+-- (The tap zones cover the whole screen, so they need no change.)
+function KoboldSettings:relayout()
+    self.dimen.w, self.dimen.h = Screen:getWidth(), Screen:getHeight()
+    self.status_bar = KoboldWidgets.sharedStatusBar(self)
+    self[1] = self:build()
+end
+
+function KoboldSettings:paintTo(bb, x, y)
+    -- Painted before the rotation event arrived: lay it out first.
+    if not self.closed and KoboldMetrics.sizeChanged(self) then self:relayout() end
+    InputContainer.paintTo(self, bb, x, y)
 end
 
 function KoboldSettings:refresh()

@@ -25,6 +25,7 @@ local KoboldCovers    = require("kobold.data.covers")
 local KoboldPrefs     = require("kobold.data.prefs")
 local KoboldBattery   = require("kobold.ui.battery")
 local KoboldTaps      = require("kobold.ui.taps")
+local KoboldMetrics   = require("kobold.ui.metrics")
 
 local Screen = Device.screen
 
@@ -351,6 +352,30 @@ function KoboldWidgets.plusIcon(size)
     return KoboldWidgets.icon("plus", size)
 end
 
+-- A black icon drawn white on a black fill: a white square is painted under
+-- the icon, the icon is drawn, and the square is inverted, so the black
+-- strokes come out white and the black fill around them stays black. Works
+-- for any icon widget (the same trick scrubber_ui.lua uses for its tabs).
+local InvertedIcon = Widget:extend{ child = nil }
+
+function InvertedIcon:getSize() return self.child:getSize() end
+
+function InvertedIcon:paintTo(bb, x, y)
+    local s = self.child:getSize()
+    self.dimen = Geom:new{ x = x, y = y, w = s.w, h = s.h }
+    bb:paintRect(x, y, s.w, s.h, Blitbuffer.COLOR_WHITE)
+    self.child:paintTo(bb, x, y)
+    bb:invertRect(x, y, s.w, s.h)
+end
+
+function InvertedIcon:free()
+    if self.child and self.child.free then self.child:free() end
+end
+
+function KoboldWidgets.inverted(child)
+    return InvertedIcon:new{ child = child }
+end
+
 -- Down chevron: KOReader has no chevron.down, so chevron.up is turned over.
 function KoboldWidgets.chevronDown(size)
     return KoboldWidgets.icon("chevron.up", size, { rotation = 180 })
@@ -421,6 +446,203 @@ function KoboldWidgets.pageBarTarget(y, opts)
     return math.floor(frac * opts.pages) + 1
 end
 
+-- Page for a finger dragging along a pageBar: the thumb follows the finger,
+-- so the thumb's centre sits at `y` (measured from the bar's top), clamped
+-- to the track. Unlike pageBarTarget the arrows count as the ends of the
+-- track. nil with a single page.
+function KoboldWidgets.pageBarDragTarget(y, opts)
+    if opts.pages <= 1 then return nil end
+    local track_h = opts.h - 2 * opts.arrow
+    local thumb_h = math.max(Screen:scaleBySize(24), math.floor(track_h / opts.pages))
+    local span = math.max(track_h - thumb_h, 1)
+    local frac = (y - opts.arrow - thumb_h / 2) / span
+    frac = math.max(0, math.min(1, frac))
+    return math.floor(frac * (opts.pages - 1) + 0.5) + 1
+end
+
+-- Wall-clock seconds, with fractions when KOReader's ffi util offers them.
+-- (os.clock counts CPU time, which barely moves while the device is idle.)
+local ok_ffiutil, ffiUtil = pcall(require, "ffi/util")
+function KoboldWidgets.now()
+    if ok_ffiutil and ffiUtil and ffiUtil.getTimestamp then
+        local ok, sec, usec = pcall(ffiUtil.getTimestamp)
+        if ok and sec then return sec + (usec or 0) / 1e6 end
+    end
+    return os.time()
+end
+
+-- Lets a screen's page bar be dragged, like the knob of a progress slider:
+-- put the finger on the bar and slide it up or down, and the thumb (and the
+-- page) follows it. A plain touch-and-move arrives as "pan"; a press that
+-- waits first arrives as "hold" then "hold_pan"; both are handled. The zones
+-- only act on a drag that starts on the bar and let every other gesture
+-- through. The swipe that can follow a quick drag is swallowed, so it does
+-- not turn one more page.
+--
+-- Zones are asked newest first, so call this AFTER the screen has registered
+-- its own swipe and hold zones, or those answer before this does.
+-- cfg = {
+--   rect = function() -> Geom of the bar's touch area, or nil to turn it off,
+--   bar  = function() -> the opts table given to pageBar (current one),
+--   top  = function() -> y of the bar's top edge,
+--   goTo = function(page) }
+function KoboldWidgets.registerBarDrag(widget, cfg)
+    local state = { active = false, last = nil, stamp = 0 }
+    local RECENT, STALE = 0.4, 3
+    local full = { ratio_x = 0, ratio_y = 0, ratio_w = 1, ratio_h = 1 }
+
+    -- Does the gesture start on the bar? (a little slack on the left)
+    local function onBar(ges)
+        local rect, bar = cfg.rect(), cfg.bar()
+        if not (rect and bar and bar.pages > 1 and ges and ges.pos) then return false end
+        local slack = Screen:scaleBySize(12)
+        return ges.pos:intersectWith(Geom:new{
+            x = rect.x - slack, y = rect.y, w = rect.w + slack, h = rect.h,
+        })
+    end
+    local function follow(ges)
+        local bar = cfg.bar()
+        local page = bar and KoboldWidgets.pageBarDragTarget(ges.pos.y - cfg.top(), bar)
+        if page then cfg.goTo(page) end
+    end
+    local function finish()
+        state.active = false
+        state.last = KoboldWidgets.now()
+    end
+    local function release()
+        if not state.active then return false end
+        finish()
+        return true
+    end
+    -- True while a drag is on, or just ended. Once a drag has started, no
+    -- swipe may count as a swipe: not the one that can close a quick drag, and
+    -- not one detected in the middle of it. The screen's own gesture entry
+    -- point is wrapped (once) so such a swipe is eaten before ANY zone or
+    -- handler sees it, whatever order the zones were registered in (a page
+    -- change re-registers the screen's zones, which can put its own swipe
+    -- zone ahead of this one).
+    -- Should this swipe be eaten? Yes if it comes in the middle of a drag (that
+    -- ends the drag) or right after one. A drag that never got its release
+    -- (no event for STALE seconds) is dropped, so it can never block swipes.
+    widget._bar_drag_busy = function()
+        local t = KoboldWidgets.now()
+        if state.active then
+            if t - state.stamp > STALE then
+                state.active = false
+            else
+                finish()
+                return true
+            end
+        end
+        return state.last ~= nil and t - state.last < RECENT
+    end
+    if not widget._bar_drag_wrapped then
+        widget._bar_drag_wrapped = true
+        local original = widget.onGesture
+        widget.onGesture = function(self, ev)
+            if ev and ev.ges == "swipe" and self._bar_drag_busy and self._bar_drag_busy() then
+                return true
+            end
+            return original(self, ev)
+        end
+    end
+
+    widget:registerTouchZones({
+        {
+            id = "KoboldBarHold", ges = "hold", screen_zone = full,
+            handler = function(ges)
+                if onBar(ges) then state.active = true; state.stamp = KoboldWidgets.now(); return true end
+                return false
+            end,
+        },
+        {
+            id = "KoboldBarPan", ges = "pan", screen_zone = full,
+            handler = function(ges)
+                if state.active then state.stamp = KoboldWidgets.now(); follow(ges); return true end
+                -- Sideways pans are not for the bar.
+                if ges.direction == "west" or ges.direction == "east" then return false end
+                if onBar(ges) then
+                    state.active = true
+                    state.stamp = KoboldWidgets.now()
+                    follow(ges)
+                    return true
+                end
+                return false
+            end,
+        },
+        {
+            id = "KoboldBarHoldPan", ges = "hold_pan", screen_zone = full,
+            handler = function(ges)
+                if not state.active then return false end
+                state.stamp = KoboldWidgets.now()
+                follow(ges)
+                return true
+            end,
+        },
+        { id = "KoboldBarPanRelease",  ges = "pan_release",  screen_zone = full, handler = release },
+        { id = "KoboldBarHoldRelease", ges = "hold_release", screen_zone = full, handler = release },
+        {
+            id = "KoboldBarSwipe", ges = "swipe", screen_zone = full,
+            handler = function()
+                return widget._bar_drag_busy()
+            end,
+        },
+    })
+    return state
+end
+
+-- On/off switch shared by the popups (brightness, Wi-Fi, clock): a pill with
+-- a round knob, painted by hand so it sits exactly in the middle of its row.
+-- On: black pill, white knob on the right. Off: white pill with a black
+-- outline, black knob on the left.
+local Switch = Widget:extend{ w = 0, h = 0, on = false }
+
+function Switch:getSize() return Geom:new{ w = self.w, h = self.h } end
+
+function Switch:paintTo(bb, x, y)
+    local border = Screen:scaleBySize(2)
+    local gap = Screen:scaleBySize(3)
+    local r = math.floor(self.h / 2)
+    bb:paintRoundedRect(x, y, self.w, self.h, Blitbuffer.COLOR_BLACK, r)
+    if not self.on then
+        bb:paintRoundedRect(x + border, y + border, self.w - 2 * border, self.h - 2 * border,
+            Blitbuffer.COLOR_WHITE, r - border)
+    end
+    local k = self.h - 2 * (border + gap)
+    local kx = self.on and (x + self.w - border - gap - k) or (x + border + gap)
+    bb:paintRoundedRect(kx, y + border + gap, k, k,
+        self.on and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK, math.floor(k / 2))
+end
+
+function Switch:free() end
+
+KoboldWidgets.Switch = Switch
+
+-- A switch of the standard size. Returns the widget and its width.
+function KoboldWidgets.switch(on)
+    local w, h = Screen:scaleBySize(52), Screen:scaleBySize(28)
+    return Switch:new{ w = w, h = h, on = on and true or false }, w
+end
+
+-- A row with a label at the left and the switch flush with the right edge,
+-- both centred in the row. The same look on every status bar popup.
+function KoboldWidgets.switchRow(inner, h, text, on)
+    local sw, sw_w = KoboldWidgets.switch(on)
+    local label = TextWidget:new{
+        text = text, face = KoboldWidgets.face(19), bold = true,
+        max_width = inner - sw_w - Screen:scaleBySize(12),
+    }
+    return CenterContainer:new{
+        dimen = Geom:new{ w = inner, h = h },
+        HorizontalGroup:new{
+            align = "center",
+            label,
+            HorizontalSpan:new{ width = math.max(0, inner - label:getSize().w - sw_w) },
+            sw,
+        },
+    }
+end
+
 -- Square outlined placeholder, used as the fallback when an icon cannot load.
 function KoboldWidgets.iconPlaceholder(size)
     local bs = Screen:scaleBySize(2)
@@ -469,7 +691,10 @@ local STATUS_GAP  = 18
 local function statusIconWidths()
     local size = Screen:scaleBySize(STATUS_ICON)
     local style = KoboldPrefs.get("battery")
-    local battery = math.floor(size * (style == "percent" and 1.7 or 1.3))
+    -- Kobold's own battery fills more of its square than KOReader's old one, so
+    -- it is drawn a little smaller for the same look.
+    local own = KoboldWidgets.koboldIcons()
+    local battery = math.floor(size * (style == "percent" and (own and 1.55 or 1.7) or (own and 1.15 or 1.3)))
     return { size, size, battery, size }, size, Screen:scaleBySize(STATUS_GAP), style
 end
 
@@ -565,6 +790,15 @@ function KoboldWidgets.statusBarFrame(screen, margin, content_w, status_h, top)
     return frame
 end
 
+-- The status bar at the one place every screen shares (see metrics.lua):
+-- Home, Library and Settings all call this, so the bar does not move when you
+-- change tab or open Settings. Screens start their own content at
+-- KoboldMetrics.statusBar().bottom.
+function KoboldWidgets.sharedStatusBar(screen)
+    local bar = KoboldMetrics.statusBar()
+    return KoboldWidgets.statusBarFrame(screen, bar.margin, bar.content_w, bar.h, bar.top)
+end
+
 -- Redraws the status bar of `screen` (time, Wi-Fi and battery) and refreshes
 -- only that strip of the screen.
 function KoboldWidgets.refreshStatusBar(screen)
@@ -580,8 +814,8 @@ end
 -- menu changed something (the file browser refreshes its list then).
 -- False when the file browser is not there to provide it.
 function KoboldWidgets.showBookMenu(file, on_change)
-    local FileManager = package.loaded["apps/filemanager/filemanager"]
-    local fc = FileManager and FileManager.instance and FileManager.instance.file_chooser
+    local fm = require("kobold.ui.park").fm()   -- made now when a book is parked
+    local fc = fm and fm.file_chooser
     local show = fc and (fc.showFileDialog or fc.onFileHold)
     if not show then return false end
     if on_change and fc.refreshPath then
@@ -614,23 +848,31 @@ function KoboldWidgets.debugScreenshot()
     end)
     if not ok then
         logger.warn("Kobold: screenshot failed:", tostring(err))
-        local InfoMessage = require("ui/widget/infomessage")
-        UIManager:show(InfoMessage:new{ text = "Screenshot failed: " .. tostring(err) })
+        require("kobold.ui.toast").error("Screenshot failed: " .. tostring(err))
     end
     UIManager:scheduleIn(2, function() UIManager:setDirty("all", "full") end)
 end
 
--- KOReader's file search (file names, not text inside books), the same
--- dialog as Search in the file browser. Its results open above Kobold.
+-- The search button of the status bar: Kobold's own full-screen search (the
+-- collection editor in search mode: a search field, the library's books, tap
+-- one to open it). KOReader's own file search stays as the fallback.
 function KoboldWidgets.showFileSearch()
+    local gettext = require("gettext")
+    local ok_own = pcall(function()
+        require("kobold.ui.collection_editor").show{
+            mode = "search",
+            title = gettext("Search"),
+            books = require("kobold.data.mybooks").getBooks(),
+        }
+    end)
+    if ok_own then return end
     local ok, FileManager = pcall(require, "apps/filemanager/filemanager")
     local fm = ok and FileManager and FileManager.instance
     local searcher = fm and fm.filesearcher
     local shown = searcher and searcher.onShowFileSearch
         and pcall(searcher.onShowFileSearch, searcher)
     if not shown then
-        local InfoMessage = require("ui/widget/infomessage")
-        UIManager:show(InfoMessage:new{ text = require("gettext")("File search is not available.") })
+        require("kobold.ui.toast").error(require("gettext")("File search is not available."))
     end
 end
 
@@ -651,10 +893,25 @@ local function isEdgeSwipe(ev)
     return ev.pos.x < W * edge or ev.pos.x > W * (1 - edge)
 end
 
+-- A vertical swipe along a side edge: where KOReader's brightness and warmth
+-- gestures usually sit. Horizontal swipes from the edge (paging) are not.
+local function isEdgeAlongSwipe(ev)
+    return isEdgeSwipe(ev) and (ev.direction == "north" or ev.direction == "south")
+end
+
 -- The file browser's Gestures plugin, or nil.
-local function gesturesPlugin()
-    local FileManager = package.loaded["apps/filemanager/filemanager"]
-    local fm = FileManager and FileManager.instance
+-- `need`: with a book parked under KiKome the file browser does not exist;
+-- it is made now (the book closes) only when `need` is true. Edge swipes and
+-- set corners need it; the catch-all for any other touch does not, so
+-- ordinary taps never end the parking.
+local function gesturesPlugin(need)
+    local fm
+    if need then
+        fm = require("kobold.ui.park").fm()
+    else
+        local FileManager = package.loaded["apps/filemanager/filemanager"]
+        fm = FileManager and FileManager.instance
+    end
     return fm, fm and fm.gestures
 end
 
@@ -674,8 +931,8 @@ end
 -- one set of gestures for the file browser and one for the reader; the
 -- file browser's set is tried first, then the reader's (actions that only
 -- make sense in a book simply do nothing here). True when one ran.
-local function forwardGesture(ev)
-    local fm, g = gesturesPlugin()
+local function forwardGesture(ev, need)
+    local fm, g = gesturesPlugin(need)
     if not fm or not fm.onGesture then return false end
     if runOnFileBrowser(fm, ev) then return true end
     local reader_set = g and g.data and g.data.gesture_reader
@@ -715,6 +972,11 @@ end
 -- nothing set.
 local function cornerIsSet(name)
     local _fm, g = gesturesPlugin()
+    if not g then
+        -- A book is parked under KiKome: the reader holds the same data.
+        local RU = package.loaded["apps/reader/readerui"]
+        g = RU and RU.instance and RU.instance.gestures
+    end
     if not name or not g or not g.data then return false end
     for _i, set in ipairs({ g.data.gesture_fm, g.data.gesture_reader }) do
         if type(set) == "table" and set[name] ~= nil then return true end
@@ -735,6 +997,16 @@ local function koboldControlAt(screen, ev)
     return ok and found
 end
 
+-- Lays `screen` out again when the screen size is not the one it was built
+-- for. Returns false, so the event goes on to the other windows.
+function KoboldWidgets.handleResize(screen)
+    if screen.closed or not screen.relayout then return false end
+    if not KoboldMetrics.sizeChanged(screen) then return false end
+    screen:relayout()
+    UIManager:setDirty(screen, "full")
+    return false
+end
+
 function KoboldWidgets.addScreenEvents(ScreenClass)
     -- KOReader's own gestures (the Gestures plugin: edge swipes, diagonal
     -- and two-finger gestures, multiswipes, ...) live on the file browser
@@ -746,9 +1018,15 @@ function KoboldWidgets.addScreenEvents(ScreenClass)
     -- goes to Kobold first.
     function ScreenClass:onGesture(ev)
         local InputContainer = require("ui/widget/container/inputcontainer")
-        if isEdgeSwipe(ev) and forwardGesture(ev) then return true end
+        -- Edge swipes go to KOReader first. With a book parked under KiKome
+        -- the file browser is made for a vertical one (brightness, warmth);
+        -- a horizontal one (paging the shelf) does not end the parking.
+        if ev.ges == "swipe" and self._bar_drag_busy and self._bar_drag_busy() then
+            return true
+        end
+        if isEdgeSwipe(ev) and forwardGesture(ev, isEdgeAlongSwipe(ev)) then return true end
         if cornerIsSet(cornerGesture(ev)) and not koboldControlAt(self, ev)
-            and forwardGesture(ev) then return true end
+            and forwardGesture(ev, true) then return true end
         if InputContainer.onGesture(self, ev) then return true end
         return forwardGesture(ev)
     end
@@ -756,9 +1034,7 @@ function KoboldWidgets.addScreenEvents(ScreenClass)
     -- KOReader changed a book's metadata (Book information, custom title or
     -- author, ...): forget what Kobold remembered and show the new data.
     function ScreenClass:onBookMetadataChanged()
-        require("kobold.data.library").forgetDocInfo()
-        require("kobold.data.mybooks").forget()
-        require("kobold.data.bookinfo").forget()
+        require("kobold.data.library").forgetAll()
         if self.scheduleReload then
             self:scheduleReload()
         elseif self.kobold_tab == "home" and self.refreshCovers then
@@ -799,6 +1075,13 @@ function KoboldWidgets.addScreenEvents(ScreenClass)
         KoboldWidgets.refreshStatusBar(self)
         UIManager:scheduleIn(2, function() KoboldWidgets.refreshStatusBar(self) end)
     end
+    -- The screen was rotated or resized: lay this screen out again, in place
+    -- (a screen that defines relayout()), and ask for a full repaint. Nothing
+    -- is closed or opened, so the window stack stays as it was. paintTo checks
+    -- the size too, in case a screen is painted before the event reaches it.
+    function ScreenClass:onSetDimensions() return KoboldWidgets.handleResize(self) end
+    function ScreenClass:onScreenResize() return KoboldWidgets.handleResize(self) end
+
     -- A book is opening (from Kobold or elsewhere): park this screen under
     -- the reader instead of closing it (see session.lua).
     function ScreenClass:onShowingReader()

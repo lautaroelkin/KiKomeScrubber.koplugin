@@ -5,6 +5,11 @@
 -- above it. The chosen option of a row is filled black with an inverted icon;
 -- the others are filled grey with a black icon.
 --
+-- A row can also be a section heading: { heading = "Sort & Filter" } draws a bold
+-- title with a rule under it, like the sheet's own title, and starts a new
+-- section. A row can hold several choices side by side, each with its own
+-- subtitle: { cols = { { label = "Alphabetical", ... }, { label = "Language", ... } } }.
+--
 -- A row can be an action instead of a choice: set close = true and the sheet
 -- closes after the tap (use it to jump somewhere, e.g. open the Recent tab).
 --
@@ -49,6 +54,7 @@ local UIManager      = require("ui/uimanager")
 local Widget         = require("ui/widget/widget")
 local lfs            = require("libs/libkoreader-lfs")
 local KoboldWidgets  = require("kobold.ui.widgets")
+local Refresh        = require("kobold.ui.refresh")
 
 local Screen = Device.screen
 local BLACK, WHITE = Blitbuffer.COLOR_BLACK, Blitbuffer.COLOR_WHITE
@@ -171,6 +177,7 @@ end
 function Sheet:build()
     self:release()
     self.widgets, self.chips = {}, {}
+    self.labels, self.heads = {}, {}
     local function keep(w)
         self.widgets[#self.widgets + 1] = w
         return w
@@ -190,19 +197,20 @@ function Sheet:build()
     self.rule = { x = U(17.5), y = rule_y, w = w - 2 * U(17.5), h = math.max(1, U(2)) }
     y = rule_y + self.rule.h + U(13)
 
-    for ri, row in ipairs(self.rows) do
-        if row.label then
-            local lbl = keep(TextWidget:new{
-                text = row.label, face = KoboldWidgets.face(14), fgcolor = C_SECONDARY,
+    local col_gap = U(28)
+
+    -- Measures the chips of one choice (a row, or one column of a row).
+    local function measure(src)
+        local block = { src = src, chips = {} }
+        if src.label then
+            block.lbl = keep(TextWidget:new{
+                text = src.label, face = KoboldWidgets.face(14), fgcolor = C_SECONDARY,
             })
-            self.labels = self.labels or {}
-            self.labels[#self.labels + 1] = { w = lbl, x = inset, y = y, h = label_h }
-            y = y + label_h
         end
-        local x = inset
-        for _i, opt in ipairs(row.options or {}) do
-            local selected = (opt.id == row.selected)
-            local chip = { id = opt.id, row = ri, selected = selected }
+        local line = 0
+        for _i, opt in ipairs(src.options or {}) do
+            local selected = (opt.id == src.selected)
+            local chip = { id = opt.id, src = src, selected = selected }
             chip.label = keep(TextWidget:new{
                 text = opt.label, face = KoboldWidgets.face(15),
                 fgcolor = selected and WHITE or BLACK,
@@ -211,18 +219,71 @@ function Sheet:build()
                 chip.image = keep(iconWidget(opt.icon, icon_size, BLACK))
             end
             local icon_space = chip.image and (icon_size + icon_gap) or 0
-            local chip_w = chip.label:getSize().w + icon_space + 2 * chip_pad
-            if x > inset and x + chip_w > w - inset then
-                -- no room left on this line: continue on the next one
-                x = inset
-                y = y + chip_h + chip_gap
-            end
-            chip.rect = Geom:new{ x = x, y = y, w = chip_w, h = chip_h }
-            chip.label_x = x + chip_w - chip_pad - chip.label:getSize().w
-            self.chips[#self.chips + 1] = chip
-            x = x + chip_w + chip_gap
+            chip.w = chip.label:getSize().w + icon_space + 2 * chip_pad
+            block.chips[#block.chips + 1] = chip
+            line = line + chip.w + ((#block.chips > 1) and chip_gap or 0)
         end
-        y = y + chip_h + row_gap
+        block.w = math.max(line, block.lbl and block.lbl:getSize().w or 0)
+        return block
+    end
+
+    -- Places a measured block with its left edge at x0, its subtitle (if any)
+    -- over its chips; with wrap, chips that do not fit go on the next line.
+    -- Returns the y under it.
+    local function place(block, x0, y0, wrap)
+        local py = y0
+        if block.lbl then
+            self.labels[#self.labels + 1] = { w = block.lbl, x = x0, y = py, h = label_h }
+            py = py + label_h
+        end
+        local x = x0
+        for _i, chip in ipairs(block.chips) do
+            if wrap and x > x0 and x + chip.w > w - inset then
+                -- no room left on this line: continue on the next one
+                x = x0
+                py = py + chip_h + chip_gap
+            end
+            chip.rect = Geom:new{ x = x, y = py, w = chip.w, h = chip_h }
+            chip.label_x = x + chip.w - chip_pad - chip.label:getSize().w
+            self.chips[#self.chips + 1] = chip
+            x = x + chip.w + chip_gap
+        end
+        return py + chip_h + row_gap
+    end
+
+    for _ri, row in ipairs(self.rows) do
+        if row.heading then
+            -- a section heading: bold title over a rule, like the sheet's own
+            local hw = keep(TextWidget:new{ text = row.heading, face = KoboldWidgets.face(17), bold = true })
+            local hc = y + U(26)
+            local hrule_y = hc + U(24)
+            self.heads[#self.heads + 1] = {
+                w = hw, x = inset, y = hc - math.floor(hw:getSize().h / 2), rule_y = hrule_y,
+            }
+            y = hrule_y + math.max(1, U(2)) + U(13)
+        elseif row.cols then
+            -- several choices side by side, each with its own subtitle; when
+            -- they do not fit on one line they stack as separate rows
+            local blocks, total = {}, 0
+            for _i, col in ipairs(row.cols) do
+                local b = measure(col)
+                blocks[#blocks + 1] = b
+                total = total + b.w
+            end
+            total = total + col_gap * math.max(0, #blocks - 1)
+            if total <= w - 2 * inset then
+                local x, ny = inset, y
+                for _i, b in ipairs(blocks) do
+                    ny = math.max(ny, place(b, x, y, false))
+                    x = x + b.w + col_gap
+                end
+                y = ny
+            else
+                for _i, b in ipairs(blocks) do y = place(b, inset, y, true) end
+            end
+        else
+            y = place(measure(row), inset, y, true)
+        end
     end
     self.height = y + U(5)
     self.top = self.bottom - self.height
@@ -275,6 +336,10 @@ function Sheet:paintTo(bb, x, y)
         top + U(21) - math.floor(self.chevron_size / 2))
     bb:paintRect(x + self.rule.x, top + self.rule.y, self.rule.w, self.rule.h, C_RULE)
     self.heading:paintTo(bb, x + self.heading_pos.x, top + self.heading_pos.y)
+    for _i, hd in ipairs(self.heads or {}) do
+        bb:paintRect(x + self.rule.x, top + hd.rule_y, self.rule.w, self.rule.h, C_RULE)
+        hd.w:paintTo(bb, x + hd.x, top + hd.y)
+    end
     for _i, l in ipairs(self.labels or {}) do
         l.w:paintTo(bb, x + l.x, top + l.y + math.floor((l.h - l.w:getSize().h) / 2))
     end
@@ -317,7 +382,7 @@ function Sheet:onTapSheet(_ev, ges)
         local r = chip.rect
         if pos.x >= self.left + r.x and pos.x < self.left + r.x + r.w
             and pos.y >= self.top + r.y and pos.y < self.top + r.y + r.h then
-            local row = self.rows[chip.row]
+            local row = chip.src
             if chip.selected and not row.toggle then break end
             -- a toggle row clears its choice when the chosen chip is tapped again
             local value = (not chip.selected) and chip.id or nil
@@ -343,6 +408,8 @@ end
 
 function Sheet:onShow()
     UIManager:setDirty(self, "ui", self:region())
+    -- Once more when the panel is free, in case this first update is lost.
+    Refresh.settle(self, function() return self:region() end)
     return true
 end
 
@@ -355,6 +422,9 @@ end
 -- the top of this file), and opts.rows: a list of
 --   { label?, options = { {id, label, icon?}, ... }, selected = id,
 --     on_pick = function(id) end, close? = true, toggle? = true }
+-- or a section heading: { heading = "Sort & Filter" }
+-- or several choices side by side: { cols = { <row>, <row> } }, each with its own
+-- label (they stack when they do not fit on one line)
 -- toggle: tapping the chosen option again clears it; on_pick receives nil.
 -- Without rows, a single row can be given as opts.options / opts.selected / opts.on_pick.
 function OptionSheet.show(opts)
@@ -365,7 +435,9 @@ function OptionSheet.show(opts)
         title = opts.title or "Options", rows = rows,
         anchor = opts.anchor, corner = opts.radius, bottom_corner = opts.bottom_radius,
     }
-    UIManager:show(sheet)
+    -- Shown with its own area, not the whole screen (the sheet's window is
+    -- full-screen but only its panel is drawn).
+    UIManager:show(sheet, "ui", sheet:region())
     return sheet
 end
 

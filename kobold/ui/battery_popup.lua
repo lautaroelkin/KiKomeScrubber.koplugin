@@ -60,7 +60,7 @@ function KoboldBatteryPopup:build()
 
     local box = FrameContainer:new{
         bordersize = border, padding = pad,
-        radius = KoboldPopup.radius(),
+        radius = KoboldPopup.boxRadius(),
         background = Blitbuffer.COLOR_WHITE,
         content,
     }

@@ -22,7 +22,6 @@ local UIManager       = require("ui/uimanager")
 local VerticalGroup   = require("ui/widget/verticalgroup")
 local VerticalSpan    = require("ui/widget/verticalspan")
 local _               = require("gettext")
-local InfoMessage     = require("ui/widget/infomessage")
 local KoboldMeta      = require("kobold.meta")
 local KoboldPopup     = require("kobold.ui.popup")
 local KoboldPrefs     = require("kobold.data.prefs")
@@ -247,11 +246,8 @@ function KoboldAbout:onLogoTap()
     self.logo_taps = 0
     local on = not KoboldMeta.debugOn()
     KoboldPrefs.set("debug", on)
-    UIManager:show(InfoMessage:new{
-        text = on and _("Debug mode on. Long-press the clock to save a screenshot.")
-            or _("Debug mode off."),
-        timeout = 2,
-    })
+    require("kobold.ui.toast").show(on and _("Debug mode on. Long-press the clock to save a screenshot.")
+        or _("Debug mode off."), { timeout = 3 })
 end
 
 function KoboldAbout:onClose()
@@ -262,6 +258,7 @@ end
 function KoboldAbout.show()
     local w = KoboldAbout:new{}
     UIManager:show(w, "ui", w.panel_rect)
+    require("kobold.ui.refresh").settle(w, function() return w.panel_rect end)
 end
 
 return KoboldAbout
