@@ -9,9 +9,9 @@
 -- Install / Cancel buttons. When done it offers to restart KOReader.
 -- Based on the Page Scrubber updater, which comes from the Mythos updater.
 
-local ConfirmBox  = require("ui/widget/confirmbox")
+local ConfirmSheet = require("kobold.ui.confirm_sheet")
 local DataStorage = require("datastorage")
-local InfoMessage = require("ui/widget/infomessage")
+local Toast       = require("kobold.ui.toast")
 local UIManager   = require("ui/uimanager")
 local lfs         = require("libs/libkoreader-lfs")
 local logger      = require("logger")
@@ -226,19 +226,18 @@ end
 local function install(release)
     local dir = PLUGIN_DIR
     if not dir then
-        UIManager:show(InfoMessage:new{ text = _("Cannot find KiKome's folder. Please update manually.") })
+        Toast.error(_("Cannot find KiKome's folder. Please update manually."), { timeout = 6 })
         return
     end
     local work = DataStorage:getSettingsDir() .. "/kikome_update"
     local zip = work .. ".zip"
     local backup = work .. "_backup"
-    local progress = InfoMessage:new{ text = string.format(_("Downloading KiKome %s…"), release.version), timeout = 120 }
-    UIManager:show(progress)
+    local progress = Toast.working(string.format(_("Downloading KiKome %s…"), release.version), { timeout = 120 })
     UIManager:scheduleIn(0.3, function()
         local ok, err = download(release.url, zip)
-        UIManager:close(progress)
+        Toast.dismiss(progress)
         if not ok then
-            UIManager:show(InfoMessage:new{ text = _("Download failed: ") .. tostring(err), timeout = 5 })
+            Toast.error(_("Download failed: ") .. tostring(err), { timeout = 6 })
             return
         end
 
@@ -267,7 +266,7 @@ local function install(release)
         if not valid then
             sh(string.format("rm -rf %q", work))
             logger.err("KiKome: update package is not valid", tostring(unzipped), tostring(inner))
-            UIManager:show(InfoMessage:new{ text = _("Installing the update failed. Please update manually."), timeout = 5 })
+            Toast.error(_("Installing the update failed. Please update manually."), { timeout = 6 })
             return
         end
 
@@ -281,7 +280,7 @@ local function install(release)
             if backed_up then sh(string.format("cp -rf %q/. %q/", backup, dir)) end
             sh(string.format("rm -rf %q %q", work, backup))
             logger.err("KiKome: update install failed")
-            UIManager:show(InfoMessage:new{ text = _("Installing the update failed. The previous version was restored."), timeout = 5 })
+            Toast.error(_("Installing the update failed. The previous version was restored."), { timeout = 6 })
             return
         end
 
@@ -290,18 +289,18 @@ local function install(release)
         pcall(removeStaleFiles, inner, dir)
 
         sh(string.format("rm -rf %q %q", work, backup))
-        UIManager:show(ConfirmBox:new{
-            text = string.format(_("KiKome %s is installed.\n\nRestart KOReader to use it?"), release.version),
-            ok_text = _("Restart now"),
+        ConfirmSheet.show{
+            message = string.format(_("KiKome %s is installed.\n\nRestart KOReader to use it?"), release.version),
+            confirm_text = _("Restart now"),
             cancel_text = _("Later"),
-            ok_callback = function()
+            on_confirm = function()
                 if UIManager.restartKOReader then
                     UIManager:restartKOReader()
                 else
-                    UIManager:show(InfoMessage:new{ text = _("Please restart KOReader to use the new version.") })
+                    Toast.show(_("Please restart KOReader to use the new version."), { timeout = 6 })
                 end
             end,
-        })
+        }
     end)
 end
 
@@ -340,33 +339,27 @@ end
 function Updater.check()
     local current = Updater.installedVersion()
     if not current then
-        UIManager:show(InfoMessage:new{
-            text = _("Could not read the installed version."),
-        })
+        Toast.error(_("Could not read the installed version."))
         return
     end
 
     local NetworkMgr = require("ui/network/manager")
     NetworkMgr:runWhenOnline(function()
-        local checking = InfoMessage:new{ text = _("Checking for updates…"), timeout = 15 }
-        UIManager:show(checking)
+        local checking = Toast.working(_("Checking for updates…"), { timeout = 15 })
         UIManager:scheduleIn(0.3, function()
             local release, err = latestRelease()
-            UIManager:close(checking)
+            Toast.dismiss(checking)
             if not release then
-                UIManager:show(InfoMessage:new{ text = _("Could not check for updates: ") .. tostring(err), timeout = 4 })
+                Toast.error(_("Could not check for updates: ") .. tostring(err))
                 return
             end
             if not newer(release.version, current) then
-                UIManager:show(InfoMessage:new{
-                    text = string.format(_("KiKome is up to date (%s)."), current), timeout = 3,
-                })
+                Toast.show(string.format(_("KiKome is up to date (%s)."), current))
                 return
             end
             if not release.url then
-                UIManager:show(InfoMessage:new{
-                    text = string.format(_("KiKome %s is out, but its download is not ready yet."), release.version),
-                })
+                Toast.show(string.format(_("KiKome %s is out, but its download is not ready yet."), release.version),
+                    { timeout = 5 })
                 return
             end
             showUpdateDialog(release, current)
