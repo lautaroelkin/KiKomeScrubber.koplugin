@@ -1,5 +1,5 @@
 -- kobold/data/bookinfo.lua — Kobold
--- Title, authors, series and cover state for every book the cover browser
+-- Title, authors, series, keywords and cover state for every book the cover browser
 -- (BookInfoManager) has already read, fetched in ONE query instead of one
 -- lookup per book. The result is also saved to a small file, tagged with the
 -- size and time of the cover browser's database; while that database is
@@ -12,7 +12,8 @@ local KoboldPerf      = require("kobold.data.perf")
 
 local KoboldBookInfo = {}
 
-local SNAPSHOT_VERSION = 1
+-- 2: the keywords column was added (the Genres tab); old snapshots lack it.
+local SNAPSHOT_VERSION = 2
 
 local memo = nil  -- { fingerprint = string, map = { [path] = row } }
 
@@ -46,9 +47,13 @@ local function snapshotStore()
     return nil
 end
 
--- Columns read per book. The second list is a fallback in case a future
--- cover browser drops one of the optional columns.
+-- Columns read per book. The later lists are fallbacks in case a cover browser
+-- lacks one of the optional columns.
 local QUERIES = {
+    { sql = "SELECT directory, filename, title, authors, series, series_index, has_cover, cover_fetched, keywords"
+        .. " FROM bookinfo WHERE in_progress = 0;",
+      cols = { "title", "authors", "series", "series_index", "has_cover", "cover_fetched", "keywords" } },
+    -- Without keywords, in case a cover browser has no such column.
     { sql = "SELECT directory, filename, title, authors, series, series_index, has_cover, cover_fetched"
         .. " FROM bookinfo WHERE in_progress = 0;",
       cols = { "title", "authors", "series", "series_index", "has_cover", "cover_fetched" } },
@@ -58,7 +63,7 @@ local QUERIES = {
 
 -- One query over the cover browser's bookinfo table. Returns
 -- { [directory .. filename] = { title, authors, series, series_index,
--- has_cover, cover_fetched } }, or nil when the database cannot be read.
+-- has_cover, cover_fetched, keywords } }, or nil when the database cannot be read.
 local function queryAll()
     local ok_bim, BIM = pcall(require, "bookinfomanager")
     if not ok_bim or not BIM or type(BIM.openDbConnection) ~= "function" then return nil end
@@ -92,9 +97,16 @@ end
 -- The whole map, from memory, the saved file, or a fresh query, in that
 -- order. Always a table (empty when the cover browser is not available).
 function KoboldBookInfo.getMap()
+    -- Asked once per book by the tabs and shelves: the database file is looked
+    -- at once a second, not at every call.
+    local now = os.time()
+    if memo and memo.checked == now then return memo.map end
     local fingerprint = KoboldBookInfo.fingerprint()
     if not fingerprint then return {} end
-    if memo and memo.fingerprint == fingerprint then return memo.map end
+    if memo and memo.fingerprint == fingerprint then
+        memo.checked = now
+        return memo.map
+    end
 
     local t = KoboldPerf.start()
     local store = snapshotStore()
@@ -102,7 +114,7 @@ function KoboldBookInfo.getMap()
         local ok, saved = pcall(store.load, store)
         if ok and type(saved) == "table" and saved.fingerprint == fingerprint
             and type(saved.map) == "table" then
-            memo = { fingerprint = fingerprint, map = saved.map }
+            memo = { fingerprint = fingerprint, map = saved.map, checked = now }
             KoboldPerf.log("bookinfo snapshot", t)
             return saved.map
         end
@@ -110,7 +122,7 @@ function KoboldBookInfo.getMap()
 
     local map = queryAll()
     if not map then return {} end
-    memo = { fingerprint = fingerprint, map = map }
+    memo = { fingerprint = fingerprint, map = map, checked = now }
     if store then pcall(store.save, store, { fingerprint = fingerprint, map = map }) end
     KoboldPerf.log("bookinfo query", t)
     return map

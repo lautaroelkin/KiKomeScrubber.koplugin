@@ -35,6 +35,7 @@ local DEFAULTS = {
     stats_label        = nil,            -- nil = "Reading Stats"
     battery            = "fill",         -- "fill" or "percent"
     open_tap           = "koreader",     -- "koreader", "single" or "double"
+    hot_park           = true,           -- leaving a book keeps it open under KiKome (see park.lua)
 }
 
 -- The settings behind the reading stats popup, for its reset button.
@@ -62,6 +63,12 @@ function KoboldPrefs.set(name, value)
     local t = all()
     t[name] = value
     G_reader_settings:saveSetting(KEY, t)
+    revision = revision + 1
+end
+
+-- Tells the open screens that something changed (the Library tabs, which are
+-- kept elsewhere, use it): the revision goes up, nothing is saved.
+function KoboldPrefs.touch()
     revision = revision + 1
 end
 

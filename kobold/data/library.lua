@@ -239,6 +239,24 @@ function KoboldLibrary.forgetDocInfo()
     library_cache = nil
 end
 
+-- Forgets EVERYTHING Kobold remembers about the books: the library scan, the
+-- sidecar reads, the languages, the genres, My Books' entries and KOReader's
+-- book info. One place for it: the Refresh library buttons (Library, Home)
+-- and the "KOReader changed a book's metadata" event (widgets.lua) all call it,
+-- so a cache added later only has to be added here. The next read starts from
+-- the disk again.
+local FORGET_ON_REFRESH = {
+    "kobold.data.booklang", "kobold.data.genres",
+    "kobold.data.mybooks", "kobold.data.bookinfo",
+}
+function KoboldLibrary.forgetAll()
+    KoboldLibrary.forgetDocInfo()   -- also drops the library scan
+    for _i, name in ipairs(FORGET_ON_REFRESH) do
+        local ok, mod = pcall(require, name)   -- required late: they require this file
+        if ok and type(mod) == "table" and mod.forget then pcall(mod.forget) end
+    end
+end
+
 function KoboldLibrary.getDocInfoCached(file)
     local stamp = KoboldLibrary.sidecarStamp(file)
     if stamp == nil then

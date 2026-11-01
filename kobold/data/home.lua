@@ -11,8 +11,8 @@ local KoboldHomeData = {}
 
 -- The last opened books, exactly as KOReader's history has them (most recent
 -- first). No filter: finished and never-read books are included too.
--- Progress is read live from each book's sidecar (no cache), so it is never
--- stale. hours_left is estimated from the book's own reading stats (pages
+-- Progress comes from each book's sidecar, remembered until its stamp
+-- changes (see getDocInfoCached), so it is never stale. hours_left is estimated from the book's own reading stats (pages
 -- left times average seconds per page), or nil when there are none.
 function KoboldHomeData.getCurrentlyReading(n)
     local ok, RH = pcall(require, "readhistory")
@@ -27,7 +27,9 @@ function KoboldHomeData.getCurrentlyReading(n)
         if #picked >= n then break end
         local file = entry.file
         if file and lfs.attributes(file, "mode") == "file" then
-            local info = KoboldLibrary.getDocInfo(file) or {}
+            -- Read again only when the sidecar changed (its stamp), so a
+            -- return from a book parses the one book that changed, not 12.
+            local info = KoboldLibrary.getDocInfoCached(file) or {}
             picked[#picked + 1] = {
                 file = file, percent = info.percent or 0,
                 pages = info.pages, md5 = info.md5,

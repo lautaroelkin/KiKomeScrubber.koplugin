@@ -191,6 +191,53 @@ local function updateBimRow(old_path, new_path, db)
     end))
 end
 
+-- The sidecar folders (book.sdr) a book may have, as { old, new } for each
+-- location KOReader keeps them in. None in hash mode: there the content
+-- names the sidecar, so there is nothing to carry along.
+local function sidecarPairs(old_path, new_path)
+    local out = {}
+    if G_reader_settings:readSetting("document_metadata_folder", "doc") == "hash" then return out end
+    local DocSettings = require("docsettings")
+    for _i, loc in ipairs({ "doc", "dir" }) do
+        local ok, old_sdr, new_sdr = pcall(function()
+            return DocSettings:getSidecarDir(old_path, loc), DocSettings:getSidecarDir(new_path, loc)
+        end)
+        if ok and old_sdr and new_sdr and old_sdr ~= "" and new_sdr ~= "" and old_sdr ~= new_sdr
+            and lfs.attributes(old_sdr, "mode") == "directory" then
+            out[#out + 1] = { old = old_sdr, new = new_sdr }
+        end
+    end
+    return out
+end
+
+-- Moves what is still inside an old sidecar folder (files other plugins keep
+-- there, which KOReader does not know about) into the new one. Never
+-- overwrites: a file that clashes stays where it is, and the old folder is
+-- only removed once it is empty, so nothing is ever lost.
+local function moveMissing(old_dir, new_dir)
+    if lfs.attributes(new_dir, "mode") ~= "directory" then
+        local parent = new_dir:match("^(.*)/[^/]+$")
+        if parent then pcall(function() require("util").makePath(parent) end) end
+        if os.rename(old_dir, new_dir) then return end
+        if not (lfs.mkdir(new_dir) or lfs.attributes(new_dir, "mode") == "directory") then return end
+    end
+    local ok, iter, state = pcall(lfs.dir, old_dir)
+    if not ok then return end
+    local names = {}
+    for name in iter, state do
+        if name ~= "." and name ~= ".." then names[#names + 1] = name end
+    end
+    for _i, name in ipairs(names) do
+        local from, to = joinDir(old_dir, name), joinDir(new_dir, name)
+        if not exists(to) then
+            os.rename(from, to)
+        elseif lfs.attributes(from, "mode") == "directory" and lfs.attributes(to, "mode") == "directory" then
+            moveMissing(from, to)
+        end
+    end
+    if lfs.rmdir then lfs.rmdir(old_dir) end   -- fails (and stays) unless empty
+end
+
 -- What follows a book after its file has moved. Each step on its own, so one
 -- failing never undoes the move (worst case a stale cache entry).
 local function fixupMoved(old_path, new_path, db)
@@ -198,6 +245,9 @@ local function fixupMoved(old_path, new_path, db)
         if not renameSidecar(old_path, new_path) then
             require("docsettings").updateLocation(old_path, new_path)
         end
+    end)
+    safe("sidecar-leftovers", old_path, function()
+        for _i, pair in ipairs(sidecarPairs(old_path, new_path)) do moveMissing(pair.old, pair.new) end
     end)
     safe("siblings", old_path, function() relocateSiblings(old_path, new_path) end)
     safe("booklist-cache", old_path, function()
@@ -256,6 +306,31 @@ local function physicalCopy(from, to)
     return true
 end
 
+-- Copies into `dst` whatever `src` has that `dst` lacks, subfolders included:
+-- the files other plugins keep in a sidecar folder come along. Never
+-- overwrites and never touches `src`.
+local function copyMissing(src, dst)
+    if lfs.attributes(dst, "mode") ~= "directory" then
+        pcall(function() require("util").makePath(dst) end)
+        if lfs.attributes(dst, "mode") ~= "directory" then return end
+    end
+    local ok, iter, state = pcall(lfs.dir, src)
+    if not ok then return end
+    local names = {}
+    for name in iter, state do
+        if name ~= "." and name ~= ".." then names[#names + 1] = name end
+    end
+    for _i, name in ipairs(names) do
+        local from, to = joinDir(src, name), joinDir(dst, name)
+        local mode = lfs.symlinkattributes(from, "mode")
+        if mode == "directory" then
+            copyMissing(from, to)
+        elseif mode == "file" and not exists(to) then
+            physicalCopy(from, to)
+        end
+    end
+end
+
 -- Gives the copy its own sidecar (reading progress, notes, custom cover).
 -- Only when DocSettings.updateLocation takes the "copy" flag: without it the
 -- call would MOVE the original's sidecar, so then the copy simply starts clean.
@@ -287,6 +362,11 @@ function FileOps.run(plan, mode)
             end
             if not physicalCopy(m.from, m.to) then return false end
             safe("copy-sidecar", m.from, function() copySidecar(m.from, m.to) end)
+            -- KOReader copies only the files it knows; the rest of the sidecar
+            -- folder (other plugins' files) is copied here, without overwriting.
+            safe("copy-sidecar-rest", m.from, function()
+                for _i, pair in ipairs(sidecarPairs(m.from, m.to)) do copyMissing(pair.old, pair.new) end
+            end)
             return true
         end)
         if ok_call and ok then
@@ -343,14 +423,62 @@ local function deleteBimRow(path, db)
     end))
 end
 
+-- Removes a file or a folder with everything inside it (like rm -rf).
+-- Symbolic links are removed, never followed. Each entry on its own, so one
+-- that cannot be removed never stops the others.
+local function removeTree(path)
+    local mode = lfs.symlinkattributes(path, "mode")
+    if mode == "directory" then
+        local ok, iter, state = pcall(lfs.dir, path)
+        if ok then
+            for name in iter, state do
+                if name ~= "." and name ~= ".." then removeTree(joinDir(path, name)) end
+            end
+        end
+        if not (lfs.rmdir and lfs.rmdir(path)) then os.remove(path) end
+    elseif mode then
+        os.remove(path)
+    end
+end
+
+-- The sidecar folders (book.sdr) a book has right now: next to it and in
+-- KOReader's docsettings folder. Looked up BEFORE the file is deleted, and
+-- only the folders named after this very book. None in hash mode: there the
+-- folder is named by the content, and an identical copy of the book elsewhere
+-- would lose its progress with it.
+local function sidecarDirsOf(path)
+    local out = {}
+    -- Never lets a failed lookup stop the delete itself: worst case the
+    -- folder stays, as before.
+    safe("sidecar-dirs", path, function()
+        if G_reader_settings:readSetting("document_metadata_folder", "doc") == "hash" then return end
+        local DocSettings = require("docsettings")
+        local seen = {}
+        for _i, loc in ipairs({ "doc", "dir" }) do
+            local ok, dir = pcall(function() return DocSettings:getSidecarDir(path, loc) end)
+            if ok and type(dir) == "string" and dir:match("%.sdr/?$") and not seen[dir]
+                and lfs.symlinkattributes(dir, "mode") == "directory" then
+                seen[dir] = true
+                out[#out + 1] = dir
+            end
+        end
+    end)
+    return out
+end
+
 -- What goes with a book once its file is gone: reading progress and notes
 -- (the sidecar, which holds a custom cover too), history, collections and
 -- the cover browser's row. Each step on its own, so one failing never
--- stops the others.
-local function forgetDeleted(path, db)
+-- stops the others. `sidecar_dirs` (from sidecarDirsOf, taken before the file
+-- went) are removed whole afterwards: KOReader's purge only takes the files
+-- it knows, and the files other plugins keep in there would stay behind.
+local function forgetDeleted(path, db, sidecar_dirs)
     safe("sidecar", path, function()
         local DocSettings = require("docsettings")
         DocSettings:open(path):purge()
+    end)
+    safe("sidecar-leftovers", path, function()
+        for _i, dir in ipairs(sidecar_dirs or {}) do removeTree(dir) end
     end)
     safe("history", path, function() require("readhistory"):removeItemByPath(path) end)
     safe("collections", path, function() require("readcollection"):removeItem(path) end)
@@ -377,12 +505,14 @@ function FileOps.delete(plan)
         local ok_call, ok = pcall(function()
             for _j, ext in ipairs(DERIVED_SIBLING_EXTS) do
                 local sib = path .. "." .. ext
-                if lfs.attributes(sib, "mode") == "file" and os.remove(sib) then
-                    forgetDeleted(sib, db)
+                if lfs.attributes(sib, "mode") == "file" then
+                    local sib_dirs = sidecarDirsOf(sib)
+                    if os.remove(sib) then forgetDeleted(sib, db, sib_dirs) end
                 end
             end
+            local dirs = sidecarDirsOf(path)
             if not os.remove(path) then return false end
-            forgetDeleted(path, db)
+            forgetDeleted(path, db, dirs)
             return true
         end)
         if ok_call and ok then
@@ -395,6 +525,74 @@ function FileOps.delete(plan)
     if db then pcall(function() db:close() end) end
     safe("library", "", function() require("kobold.data.library").forgetDocInfo() end)
     return summary
+end
+
+-- Folders --------------------------------------------------------------
+
+-- Every book KOReader can open inside `dir`, subfolders included.
+local function booksUnder(dir)
+    local out = {}
+    local ok, DocumentRegistry = pcall(require, "document/documentregistry")
+    local function walk(d)
+        local ok_dir, iter, state = pcall(lfs.dir, d)
+        if not ok_dir then return end
+        for name in iter, state do
+            if name ~= "." and name ~= ".." then
+                local path = joinDir(d, name)
+                local mode = lfs.attributes(path, "mode")
+                if mode == "directory" then
+                    if not name:match("%.sdr$") then walk(path) end
+                elseif mode == "file" and ok and DocumentRegistry:hasProvider(path) then
+                    out[#out + 1] = path
+                end
+            end
+        end
+    end
+    walk(normDir(dir))
+    return out
+end
+
+-- Renames folder `old` to `new_name` (same parent). The books inside keep
+-- their reading progress, history, collections and cached covers. Returns
+-- true and the new path, or false and a reason: same, exists, in_use, failed.
+function FileOps.renameFolder(old, new_name)
+    old = normDir(old)
+    local new = joinDir(parentDir(old), new_name)
+    if new == old then return false, "same" end
+    if exists(new) then return false, "exists" end
+    local books = booksUnder(old)
+    local in_use = FileOps.inUsePaths()
+    for _i, book in ipairs(books) do
+        if in_use[book] then return false, "in_use" end
+    end
+    if not os.rename(old, new) then return false, "failed" end
+    local db = #books > 0 and openBimDb() or nil
+    for _i, from in ipairs(books) do
+        local to = new .. from:sub(#old + 1)
+        fixupMoved(from, to, db)
+        safe("history", from, function() require("readhistory"):updateItem(from, to) end)
+        safe("collections", from, function() require("readcollection"):updateItem(from, to) end)
+    end
+    if db then pcall(function() db:close() end) end
+    safe("library", "", function() require("kobold.data.library").forgetDocInfo() end)
+    return true, new
+end
+
+-- Deletes folder `dir` with everything in it: the books and what goes with
+-- them (progress, notes, history, collections), then whatever is left.
+-- Returns true, or false and a reason: in_use (a book of it is open), bad,
+-- failed.
+function FileOps.deleteFolder(dir)
+    dir = normDir(dir)
+    if dir == "/" or lfs.attributes(dir, "mode") ~= "directory" then return false, "bad" end
+    local plan = FileOps.planDelete(booksUnder(dir))
+    if plan.skipped.in_use then return false, "in_use" end
+    FileOps.delete(plan)
+    -- Whatever is left (sidecar folders with files other plugins keep in
+    -- them, notes, loose files) goes too, then the folder itself.
+    removeTree(dir)
+    if lfs.attributes(dir, "mode") then return false, "failed" end
+    return true
 end
 
 return FileOps

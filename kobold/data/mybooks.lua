@@ -1,19 +1,21 @@
 -- kobold/data/mybooks.lua — Kobold
 -- Book list for the My Books screen: one entry per book with its title,
 -- authors, series, reading status, format and file size, plus filtering,
--- sorting and grouping by author, series or collection. Builds no widgets.
+-- sorting and grouping by author, series, collection or genre. Builds no widgets.
 
 local lfs             = require("libs/libkoreader-lfs")
 local KoboldBookInfo  = require("kobold.data.bookinfo")
 local KoboldLibrary   = require("kobold.data.library")
 local KoboldPerf      = require("kobold.data.perf")
 local Chips             = require("kobold.data.chips")
+local BookLang          = require("kobold.data.booklang")
+local Genres            = require("kobold.data.genres")
 local _               = require("gettext")
 
 local KoboldMyBooksData = {}
 
--- Filter ids in menu order. "reading" also covers books put on hold.
-KoboldMyBooksData.FILTERS = { "all", "reading", "unread", "finished" }
+-- Filter ids in menu order. "onhold" is KOReader's On hold status (abandoned).
+KoboldMyBooksData.FILTERS = { "all", "reading", "unread", "finished", "onhold" }
 
 -- Sort ids in menu order. "added" is the file's modification time, the same
 -- order the library scan uses.
@@ -32,6 +34,12 @@ local function openedTimes()
     end
     return times
 end
+
+-- Sort ids of the Sort & Filter sheet (shared with Home). With none chosen the
+-- list is newest added first. "recent" is the last time a book was opened,
+-- "oldest" the opposite (never opened books first), "added_*" the file's
+-- modification time.
+KoboldMyBooksData.VIEW_SORTS = { "recent", "oldest", "added_newest", "added_oldest" }
 
 -- Sort ids for the Authors, Series and Collections lists.
 KoboldMyBooksData.GROUP_SORTS = { "name_asc", "name_desc" }
@@ -68,7 +76,7 @@ end
 -- One entry for the list:
 --   file, mtime, title, sort_key (lowercase title), authors ("A, B" or nil),
 --   author_list ({ "A", "B" }), series (or nil), series_index (or nil),
---   status ("unread"|"reading"|"finished", nil until resolved),
+--   status ("unread"|"reading"|"onhold"|"finished", nil until resolved),
 --   percent (0..1, or nil), ext ("EPUB"), size (bytes, or nil)
 -- `book` is { file, mtime, size } from the scan, `props` the cover browser's
 -- row for it (or nil). Built from those two alone, with no file reads, so the
@@ -116,8 +124,9 @@ local function readSidecar(file)
         local info = KoboldLibrary.getDocInfoCached(file) or {}
         if info.status == "complete" then
             m.status = "finished"
-        elseif (info.percent and info.percent > 0) or info.status == "reading"
-            or info.status == "abandoned" then
+        elseif info.status == "abandoned" then
+            m.status = "onhold"
+        elseif (info.percent and info.percent > 0) or info.status == "reading" then
             m.status = "reading"
         end
         m.percent = info.percent
@@ -163,6 +172,23 @@ function KoboldMyBooksData.getBooks()
     end
     KoboldPerf.log("my books entries", t, "books=%d", #books)
     return books
+end
+
+-- Reading status of one book: "unread", "reading", "onhold" or "finished". Read from
+-- its sidecar once per change (see readSidecar).
+function KoboldMyBooksData.statusOf(file)
+    return readSidecar(file).status
+end
+
+-- Entries (or paths) of `books` in language `lang`, in the same order. Without
+-- a language, all of them.
+function KoboldMyBooksData.byLanguage(books, lang)
+    if not lang then return books end
+    local out = {}
+    for _i, b in ipairs(books) do
+        if BookLang.of(type(b) == "table" and b.file or b) == lang then out[#out + 1] = b end
+    end
+    return out
 end
 
 -- Entries of `books` that match filter id `filter`, in the same order. Any
@@ -218,6 +244,47 @@ function KoboldMyBooksData.sort(books, sort)
     return out
 end
 
+-- New table with `books` ordered by the Sort & Filter sheet: `sort` is one of
+-- VIEW_SORTS (nil: newest added first) and `alpha` is "az" or "za" (nil: none).
+-- With a sort, the alphabetical order only breaks its ties; with no sort it
+-- orders the list by title on its own.
+function KoboldMyBooksData.arrange(books, sort, alpha)
+    local out = {}
+    for i, b in ipairs(books) do out[i] = b end
+    local function tie(a, b)
+        if alpha == "za" then return byTitle(b, a) end
+        return byTitle(a, b)
+    end
+    local cmp
+    if not sort and alpha then
+        cmp = tie
+    elseif sort == "recent" or sort == "oldest" then
+        local times = openedTimes()
+        local newest = (sort == "recent")
+        cmp = function(a, b)
+            local ta, tb = times[a.file] or 0, times[b.file] or 0
+            if ta ~= tb then
+                if newest then return ta > tb end
+                return ta < tb
+            end
+            if not alpha and a.mtime ~= b.mtime then return a.mtime > b.mtime end
+            return tie(a, b)
+        end
+    elseif sort == "added_oldest" then
+        cmp = function(a, b)
+            if a.mtime ~= b.mtime then return a.mtime < b.mtime end
+            return tie(a, b)
+        end
+    else -- added_newest, or nothing chosen
+        cmp = function(a, b)
+            if a.mtime ~= b.mtime then return a.mtime > b.mtime end
+            return tie(a, b)
+        end
+    end
+    table.sort(out, cmp)
+    return out
+end
+
 -- Display name of a KOReader collection. The built-in one is stored as
 -- "favorites" and shown as Favorites, as in KOReader's own collection list.
 local function collectionTitle(RC, name)
@@ -225,12 +292,15 @@ local function collectionTitle(RC, name)
     return name
 end
 
--- Groups for the Authors, Series or Collections tab (`kind` is "authors",
--- "series" or "collections"). Each group is
+-- Groups for the Authors, Series, Collections or Genres tab (`kind` is
+-- "authors", "series", "collections" or "genres"). Each group is
 --   { key, name, books = { entry, ... }, unknown = true for "Unknown author" }
--- with its books in reading order: by title for an author, by series number
--- for a series, and in the collection's own order for a collection. Books
--- without a series are left out of Series. Empty collections are kept.
+-- with its books in reading order: by title for an author or a genre, by
+-- series number for a series, and in the collection's own order for a
+-- collection. Books without a series are left out of Series, and books with
+-- no keywords out of Genres (a book with several keywords is in several
+-- genres, as a book with several authors is under each). Empty collections
+-- are kept.
 function KoboldMyBooksData.getGroups(books, kind)
     local groups, by_key = {}, {}
     local function group(key, name)
@@ -263,14 +333,21 @@ function KoboldMyBooksData.getGroups(books, kind)
                 g.books[#g.books + 1] = b
             end
         end
+    elseif kind == "genres" then
+        for _i, b in ipairs(books) do
+            for _j, name in ipairs(Genres.of(b.file)) do
+                local g = group(name:lower(), name)
+                g.books[#g.books + 1] = b
+            end
+        end
     elseif kind == "collections" then
         local ok, RC = pcall(require, "readcollection")
         if ok and RC and type(RC.coll) == "table" then
             local by_file = {}
             for _i, b in ipairs(books) do by_file[b.file] = b end
             for name, items in pairs(RC.coll) do
-                -- Favorites / To be read can be hidden (Settings > Shelves > Collections).
-                local g = not Chips.collectionHidden(RC, name) and group(name, collectionTitle(RC, name)) or nil
+                -- Favorites / To be read can be hidden (Settings > Library options > Collections).
+                local g = not Chips.libraryCollectionHidden(RC, name) and group(name, collectionTitle(RC, name)) or nil
                 for file, item in pairs(g and items or {}) do
                     local path = type(item) == "table" and item.file or file
                     local b = by_file[path]
