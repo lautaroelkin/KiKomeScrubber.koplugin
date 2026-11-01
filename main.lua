@@ -14,7 +14,6 @@ do
 end
 
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
-local InfoMessage     = require("ui/widget/infomessage")
 local UIManager       = require("ui/uimanager")
 local _               = require("gettext")
 
@@ -97,6 +96,26 @@ function Kobold:init()
 
     if self.ui and self.ui.menu then
         self.ui.menu:registerToMainMenu(self)
+    end
+
+    -- In a book: the File browser tab of the reader menu parks the book under
+    -- KiKome instead of closing it (see kobold/ui/park.lua). The menu may
+    -- build its items a moment later, so the tab is wired again after the
+    -- reader is shown.
+    if self.ui and self.ui.document then
+        self:_wireFastFileBrowserTab()
+        UIManager:nextTick(function() self:_wireFastFileBrowserTab(true) end)
+    end
+
+    -- The real close of a parked book builds a new file browser, which runs
+    -- this init again: park.lua puts the screen back itself, so nothing else
+    -- is done here.
+    if self.ui and not self.ui.document then
+        local Park = package.loaded["kobold.ui.park"]
+        if Park and Park.isFinishing() then
+            boot_handled = true
+            return
+        end
     end
 
     -- Back from a book that was opened from Kobold: closing the book builds a
@@ -185,10 +204,61 @@ end
 -- Kobold comes back), show the "Closing" pill while KOReader closes it.
 function Kobold:onCloseDocument()
     local Session = require("kobold.ui.session")
+    -- A parked book that is really closing (see park.lua) shows no pill: the
+    -- screen is already on show, or another book is opening.
+    local Park = package.loaded["kobold.ui.park"]
+    if Park then
+        Park.noteRealClose()
+        if Park.isFinishing() or Park.isSwitching() then return end
+    end
     if Session.returning() then
         local _ = require("gettext")
         require("kobold.ui.transition").show(_("Closing"))
     end
+end
+
+-- KOReader's own "File browser" action (a gesture or the quick menu send
+-- the Home event): in a book opened from KiKome the book is parked under
+-- KiKome instead of being closed. Anything else falls through to KOReader.
+function Kobold:onHome()
+    if not (self.ui and self.ui.document) then return end
+    local ok, Park = pcall(require, "kobold.ui.park")
+    if not ok then return end
+    if Park.isParked() then return true end  -- already parked: nothing to close
+    if Park.park(self.ui) then return true end
+end
+
+-- Replaces the callback of the reader menu's "File browser" tab with one
+-- that parks the book when it can, and runs KOReader's own otherwise.
+function Kobold:_wireFastFileBrowserTab(force)
+    local menu = self.ui and self.ui.menu
+    if not (self.ui and self.ui.document and menu) then return end
+    if menu._kobold_fm_wrapper and not force then return end
+    local items = menu.menu_items
+    local item = items and items.filemanager
+    if not (item and item.callback) then return end
+    if item.callback == menu._kobold_fm_wrapper then return end
+    local plugin = self
+    local prev = item.callback
+    local wrapper = function(...)
+        local ok, Park = pcall(require, "kobold.ui.park")
+        if ok and Park.canPark(plugin.ui) then
+            if menu.onTapCloseMenu then menu:onTapCloseMenu() end
+            if Park.park(plugin.ui) then return end
+        end
+        return prev(...)
+    end
+    item.callback = wrapper
+    menu._kobold_fm_wrapper = wrapper
+end
+
+-- The reader menu has built its items by now (or is about to be shown).
+function Kobold:onReaderReady()
+    self:_wireFastFileBrowserTab(true)
+end
+
+function Kobold:onShowReaderMenu()
+    UIManager:nextTick(function() self:_wireFastFileBrowserTab(true) end)
 end
 
 -- KiKome's own tab in the file browser's top menu bar, like Bookshelf's: its
@@ -247,6 +317,12 @@ function Kobold:showTab(tab, state, refresh)
     -- Kobold then has the file browser's menus to work with.
     local ReaderUI = package.loaded["apps/reader/readerui"]
     if ReaderUI and ReaderUI.instance and ReaderUI.instance.onHome then
+        -- The screen of this tab is waiting under the book: park the book.
+        local screen = require("kobold.ui.session").parkedScreen()
+        if screen and screen.kobold_tab == tab then
+            local ok_park, Park = pcall(require, "kobold.ui.park")
+            if ok_park and Park.park(ReaderUI.instance) then return true end
+        end
         require("kobold.ui.session").rememberTab(tab, state)
         local closed = pcall(function() ReaderUI.instance:onHome() end)
         if closed then return true end
@@ -256,11 +332,38 @@ function Kobold:showTab(tab, state, refresh)
         require("kobold.ui.router").show(tab, nil, state, refresh)
     end)
     if not ok then
-        UIManager:show(InfoMessage:new{
-            text = _("KiKome failed to open.") .. "\n" .. tostring(err),
-        })
+        require("kobold.ui.toast").error(_("KiKome failed to open.") .. "\n" .. tostring(err), { timeout = 6 })
+    else
+        self:_warmUp()
     end
     return ok
+end
+
+-- Once per session, after the first KiKome screen is up: loads the other
+-- screens' code a little at a time while nobody is touching anything, so the
+-- first visit to My Books, Book Details, the menus or Settings does not have
+-- to read and compile it then. One module per step, stopping at once when
+-- the device is being used.
+local warmed = false
+local WARM_MODULES = {
+    "kobold.ui.option_sheet", "kobold.ui.book_menu", "kobold.ui.book_details",
+    "kobold.ui.mybooks", "kobold.ui.view_sheet", "kobold.ui.settings",
+}
+function Kobold:_warmUp()
+    if warmed then return end
+    warmed = true
+    local i = 0
+    local function step()
+        i = i + 1
+        local name = WARM_MODULES[i]
+        if not name then return end
+        -- Busy (a book is opening, a touch just happened): try this one later.
+        local Park = package.loaded["kobold.ui.park"]
+        local busy = Park and (Park.isFinishing() or Park.isSwitching())
+        if busy then i = i - 1 else pcall(require, name) end
+        UIManager:scheduleIn(busy and 2 or 0.6, step)
+    end
+    UIManager:scheduleIn(2.5, step)
 end
 
 return Kobold
