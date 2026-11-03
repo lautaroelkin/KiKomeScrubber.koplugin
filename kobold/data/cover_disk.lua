@@ -128,4 +128,10 @@ function KoboldCoverDisk.save(file, mtime, bb, full)
     if not ok then logger.dbg("Kobold: cover save failed:", tostring(err)) end
 end
 
+-- Deletes the saved cover of `file` (Refresh metadata: it is read again).
+function KoboldCoverDisk.remove(file)
+    local path = pathFor(file)
+    if path then pcall(os.remove, path) end
+end
+
 return KoboldCoverDisk

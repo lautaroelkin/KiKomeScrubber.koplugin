@@ -578,6 +578,26 @@ function FileOps.renameFolder(old, new_name)
     return true, new
 end
 
+-- Renames one book file (same folder). Its reading progress, notes, custom
+-- cover, history, collections and cached cover go with it, exactly as when a
+-- book is moved. Returns true and the new path, or false and a reason: same,
+-- missing, exists, in_use, failed.
+function FileOps.renameFile(old, new_name)
+    local new = joinDir(parentDir(old), new_name)
+    if new == old then return false, "same" end
+    if not exists(old) then return false, "missing" end
+    if exists(new) then return false, "exists" end
+    if FileOps.inUsePaths()[old] then return false, "in_use" end
+    if not physicalMove(old, new) then return false, "failed" end
+    local db = openBimDb()
+    fixupMoved(old, new, db)
+    if db then pcall(function() db:close() end) end
+    safe("history", old, function() require("readhistory"):updateItem(old, new) end)
+    safe("collections", old, function() require("readcollection"):updateItem(old, new) end)
+    safe("library", "", function() require("kobold.data.library").forgetDocInfo() end)
+    return true, new
+end
+
 -- Deletes folder `dir` with everything in it: the books and what goes with
 -- them (progress, notes, history, collections), then whatever is left.
 -- Returns true, or false and a reason: in_use (a book of it is open), bad,

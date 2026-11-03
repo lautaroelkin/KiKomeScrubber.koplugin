@@ -223,6 +223,36 @@ function KoboldCovers.ensure(files)
     startWatch(BIM, 120)
 end
 
+-- Forgets everything Kobold keeps of one book's cover: the bitmap in memory,
+-- the one saved on disk, and the note that it was already asked for.
+function KoboldCovers.forget(file)
+    local entry = cache[file]
+    if type(entry) == "table" and entry.bytes then cache_bytes = cache_bytes - entry.bytes end
+    cache[file] = nil
+    requested[file] = nil
+    KoboldCoverDisk.remove(file)
+end
+
+-- Refresh metadata: the cover browser's row for the book is deleted and the
+-- book is read again in the background (title, authors, series, pages,
+-- cover). A custom cover and corrected metadata are not touched: they live in
+-- the book's sidecar. Returns true when the new read was started; false when
+-- the cover browser was busy (the book is read the next time a screen asks).
+function KoboldCovers.refreshBook(file)
+    KoboldCovers.forget(file)
+    local BIM = bim()
+    if BIM and BIM.deleteBookInfo then pcall(function() BIM:deleteBookInfo(file) end) end
+    KoboldBookInfo.forget()
+    if not BIM or not BIM.extractInBackground or busy(BIM) then return false end
+    requested[file] = true
+    local ok = pcall(function()
+        BIM:extractInBackground({ { filepath = file, cover_specs = coverSpecs() } })
+    end)
+    if not ok then return false end
+    startWatch(BIM, 120)
+    return true
+end
+
 -- Queues every book in `files` that has no cover yet for background
 -- extraction (Kobold Settings > Prepare covers). Returns the number queued,
 -- 0 when all have covers, or nil when the cover browser is busy or missing.
