@@ -13,6 +13,8 @@
 --       on_clear  = function() end,       -- delete held down: everything
 --       on_hide   = function() end,       -- the hide key
 --       is_empty  = function() return true end,  -- optional: the field is empty
+--       multiline = true,                 -- optional: an enter key, which types "\n" through
+--                                         -- on_insert (after it the next letter is a capital)
 --       on_redraw = function(rects) end,  -- the keys must be drawn again (a pressed
 --                                         -- key lets go): rebuild, then refresh
 --                                         -- only `rects` (screen Geoms: the keys
@@ -90,6 +92,20 @@ local ROWS_NUM = {
     withKeys({ kind = "layer", w = 2 }, { kind = "space", w = 6 }, { kind = "hide", w = 2 }),
 }
 
+-- The same two layers with an enter key, for fields of several lines (a
+-- review): the space bar gives up some width.
+local ROWS_ABC_ML = {
+    ROWS_ABC[1], ROWS_ABC[2], ROWS_ABC[3],
+    withKeys({ kind = "layer", w = 1.5 }, { kind = "accent" }, { kind = "space", w = 3.5 },
+        ch("."), { kind = "enter", w = 1.5 }, { kind = "hide", w = 1.5 }),
+}
+
+local ROWS_NUM_ML = {
+    ROWS_NUM[1], ROWS_NUM[2], ROWS_NUM[3],
+    withKeys({ kind = "layer", w = 2 }, { kind = "space", w = 4 },
+        { kind = "enter", w = 2 }, { kind = "hide", w = 2 }),
+}
+
 -- Where each key goes, in the keyboard's own coordinates.
 local function layoutKeys(rows, width, key_h, gap_x, gap_y, side, top)
     local out = {}
@@ -144,6 +160,7 @@ function Keyboard.new(opts)
     self.on_hide = opts.on_hide
     self.is_empty = opts.is_empty
     self.on_redraw = opts.on_redraw
+    self.multiline = opts.multiline and true or false
     self.pressed = nil  -- index of the key that was just tapped
     self.pressed_rects = {}  -- screen areas of keys whose pressed look is on screen
     self:reset(false)
@@ -197,7 +214,12 @@ end
 -- again after a tap that changed the keys (shift, 123, accent).
 function Keyboard:build(width)
     self:freeWidgets()
-    local rows = (self.layer == "num") and ROWS_NUM or ROWS_ABC
+    local rows
+    if self.layer == "num" then
+        rows = self.multiline and ROWS_NUM_ML or ROWS_NUM
+    else
+        rows = self.multiline and ROWS_ABC_ML or ROWS_ABC
+    end
     local keys = layoutKeys(rows, width, U(KEY_H), U(KEY_GAP_X), U(KEY_GAP_Y), U(KEY_SIDE), U(KEY_TOP))
     local widgets = {}
     for i, key in ipairs(keys) do
@@ -225,6 +247,9 @@ function Keyboard:build(width)
         elseif k == "space" then
             bg = pressed and C_PRESSED or C_KEY
             w = TextWidget:new{ text = _("space"), face = KoboldWidgets.face(15), fgcolor = C_PLACEHOLDER }
+        elseif k == "enter" then
+            bg = pressed and C_PRESSED or C_SPECIAL
+            w = OptionSheet.iconWidget("corner-down-left", U(26), BLACK)
         elseif k == "hide" then
             bg = C_SPECIAL
             w = OptionSheet.iconWidget("chevron-down", U(26), BLACK)
@@ -312,6 +337,13 @@ function Keyboard:tap(pos, y0)
         text_changed = true
         self:pressKeyDown(key, y0)
         if self.accent then self.accent, kb_changed = false, true end
+    elseif k == "enter" then
+        call(self.on_insert, "\n")
+        text_changed = true
+        self:pressKeyDown(key, y0)
+        if self.accent then self.accent, kb_changed = false, true end
+        -- a new line starts with a capital
+        if self.layer == "abc" and self.shift == "off" then self.shift, kb_changed = "once", true end
     elseif k == "back" then
         call(self.on_delete)
         text_changed = true

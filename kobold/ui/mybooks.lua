@@ -861,6 +861,14 @@ function KoboldMyBooks:buildPills()
             action = function() self:addBookToCollection() end,
         }
     end
+    if not selecting and self.tab == "files" then
+        -- Files: the plus moves books into the folder that is open ("Move to ...").
+        local plus_size = Screen:scaleBySize(26)
+        items[#items + 1] = {
+            widget = OptionSheet.iconWidget("plus", plus_size, Blitbuffer.COLOR_BLACK), width = plus_size,
+            action = function() self:moveToFolder() end,
+        }
+    end
     if not selecting then
         local dots = OptionSheet.iconWidget("adjust", Screen:scaleBySize(26), Blitbuffer.COLOR_BLACK)
         items[#items + 1] = {
@@ -936,9 +944,20 @@ function KoboldMyBooks:onListHold(pos)
     elseif self.tab == "collections" and not self.group then
         self:showCollectionOptions(item, self:rowRect(pos), "side")
     elseif not self:showsGroups() and item.file then
-        -- a book row: the same menu as its "..."
-        self:openBookMenu(item.file, self:rowRect(pos), "side", item)
+        if self:inCollection() then
+            -- inside a collection (it has the selection menu): the same menu as its "..."
+            self:openBookMenu(item.file, self:rowRect(pos), "side", item)
+        else
+            -- the other tabs have no selection menu: straight to the details page
+            self:openBookDetails(item.file)
+        end
     end
+end
+
+-- Holding a book in a tab without a selection menu (Books, Authors, Series,
+-- Genres): its details page opens directly, with no menu of rows.
+function KoboldMyBooks:openBookDetails(file)
+    require("kobold.ui.book_details").show(file, self, function() self:scheduleReload() end)
 end
 
 -- Selection mode and the clipboard --------------------------------------
@@ -1662,7 +1681,11 @@ function KoboldMyBooks:onGridHold(pos)
         end
         return
     end
-    self:openGridMenu(item, col, cell_x, cell_y)
+    if self.tab == "files" or self:inCollection() then
+        self:openGridMenu(item, col, cell_x, cell_y)
+    else
+        self:openBookDetails(item.file)
+    end
 end
 
 -- A tap on the side bar: the arrows turn one page, a tap on the track jumps

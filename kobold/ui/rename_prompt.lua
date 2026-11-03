@@ -79,6 +79,29 @@ local function pill(text, h, bg, fg, bold)
     return frame, frame:getSize().w
 end
 
+-- Width of a text in the field's face, and a text as a list of letters (a
+-- letter can be several bytes long).
+local function measure(text, face)
+    if text == "" then return 0 end
+    local t = TextWidget:new{ text = text, face = face }
+    local w = t:getSize().w
+    t:free()
+    return w
+end
+
+local function lettersOf(text)
+    local out = {}
+    for ch in text:gmatch("[%z\1-\127\194-\244][\128-\191]*") do out[#out + 1] = ch end
+    return out
+end
+
+-- Start (1-based) of the letter that ends at byte `pos`.
+local function prevCharStart(text, pos)
+    local i = pos
+    while i > 1 and text:byte(i) >= 0x80 and text:byte(i) < 0xC0 do i = i - 1 end
+    return i
+end
+
 local Prompt = InputContainer:extend{
     modal = true,
     name = "kobold_rename_prompt",
@@ -88,6 +111,7 @@ local Prompt = InputContainer:extend{
     save_text = nil,
     validate = nil,
     on_save = nil,
+    allow_unchanged = false,   -- the name that is shown can be saved as it is (Export)
 }
 
 function Prompt:init()
@@ -95,13 +119,23 @@ function Prompt:init()
     self.dimen = Geom:new{ x = 0, y = 0, w = W, h = H }
     self.original = trim(self.text or "")
     self.value = self.text or ""
+    self.pos = #self.value     -- the caret: a byte offset in the text
+    self.scroll = 0            -- letters hidden on the left of a long name
     self.kb_open = true
     self.kb = Keyboard.new{
-        on_insert = function(c) self.value = self.value .. c end,
-        on_delete = function()
-            self.value = self.value:gsub("[%z\1-\127\194-\244][\128-\191]*$", "")
+        -- typing and deleting happen where the caret is
+        on_insert = function(c)
+            self.value = self.value:sub(1, self.pos) .. c .. self.value:sub(self.pos + 1)
+            self.pos = self.pos + #c
         end,
-        on_clear = function() self.value = "" end,
+        on_delete = function()
+            if self.pos > 0 then
+                local i = prevCharStart(self.value, self.pos)
+                self.value = self.value:sub(1, i - 1) .. self.value:sub(self.pos + 1)
+                self.pos = i - 1
+            end
+        end,
+        on_clear = function() self.value, self.pos, self.scroll = "", 0, 0 end,
         on_hide = function() self:setKeyboard(false) end,
         is_empty = function() return self.value == "" end,
         -- a tapped key lets go: its darker look is drawn away, and only that
@@ -129,17 +163,19 @@ end
 function Prompt:validateName()
     self.error = nil
     local name = trim(self.value)
-    if name ~= "" and name ~= self.original and self.validate then
+    if name ~= "" and (self.allow_unchanged or name ~= self.original) and self.validate then
         self.error = self.validate(name)
     end
 end
 
 function Prompt:canSave()
     local name = trim(self.value)
-    return name ~= "" and name ~= self.original and not self.error
+    return name ~= "" and (self.allow_unchanged or name ~= self.original) and not self.error
 end
 
--- The grey name pill, with the caret while the keyboard is up.
+-- The grey name pill, with the caret (at its place in the text) while the
+-- keyboard is up. A name too long for the pill scrolls just as far as the
+-- caret needs.
 function Prompt:field(w, h)
     local pad = U(18)
     local inner_w = w - 2 * pad
@@ -153,16 +189,66 @@ function Prompt:field(w, h)
             LineWidget:new{ dimen = Geom:new{ w = U(2), h = th }, background = BLACK },
         }
     end
+    self.field_pad = pad
     local row = HorizontalGroup:new{ align = "center" }
     if self.value == "" then
+        self.pos, self.scroll, self.letters = 0, 0, {}
         if self.kb_open then row[#row + 1] = caret() end
         row[#row + 1] = TextWidget:new{
             text = self.placeholder or _("Name"), face = face, fgcolor = C_PLACEHOLDER,
             bgcolor = C_FIELD, max_width = avail,
         }
     else
-        row[#row + 1] = TextWidget:new{ text = tail(self.value, face, avail), face = face, bgcolor = C_FIELD }
+        local letters = lettersOf(self.value)
+        local n = #letters
+        self.pos = math.max(0, math.min(self.pos or #self.value, #self.value))
+        -- the caret as a count of letters
+        local c, bytes = 0, 0
+        while c < n and bytes + #letters[c + 1] <= self.pos do
+            bytes = bytes + #letters[c + 1]
+            c = c + 1
+        end
+        self.pos = bytes
+        local function span(i, j) return table.concat(letters, "", i, j) end
+        local scroll = 0
+        if measure(self.value, face) > avail then
+            scroll = math.min(self.scroll or 0, c)
+            -- the first letter shown, so that the caret fits in the pill
+            local room = avail - U(12)
+            if measure(span(scroll + 1, c), face) > room then
+                local lo, hi = scroll, c
+                while lo < hi do
+                    local mid = math.floor((lo + hi) / 2)
+                    if measure(span(mid + 1, c), face) <= room then hi = mid else lo = mid + 1 end
+                end
+                scroll = lo
+            end
+            -- when the caret is at the left edge, a few letters before it show
+            while scroll > 0 and measure(span(scroll + 1, c), face) < avail * 0.3 do
+                scroll = scroll - 1
+            end
+        end
+        self.scroll, self.letters, self.caret_letter = scroll, letters, c
+        local left = span(scroll + 1, c)
+        local left_w = measure(left, face)
+        -- the text after the caret, as much as fits
+        local right = ""
+        if c < n then
+            local lo, hi = 0, n - c
+            local room = avail - left_w
+            while lo < hi do
+                local mid = math.ceil((lo + hi) / 2)
+                if measure(span(c + 1, c + mid), face) <= room then lo = mid else hi = mid - 1 end
+            end
+            right = span(c + 1, c + lo)
+        end
+        if left ~= "" then
+            row[#row + 1] = TextWidget:new{ text = left, face = face, bgcolor = C_FIELD }
+        end
         if self.kb_open then row[#row + 1] = caret() end
+        if right ~= "" then
+            row[#row + 1] = TextWidget:new{ text = right, face = face, bgcolor = C_FIELD }
+        end
     end
     return FrameContainer:new{
         bordersize = 0, radius = math.floor(h / 2), background = C_FIELD,
@@ -171,6 +257,31 @@ function Prompt:field(w, h)
             dimen = Geom:new{ w = inner_w, h = h }, row,
         }),
     }
+end
+
+-- Where in the name a tap landed: the byte offset of the caret, between the
+-- two letters nearest to the finger.
+function Prompt:caretFromTap(x)
+    local letters = self.letters
+    if not letters or #letters == 0 then return #self.value end
+    local face = KoboldWidgets.face(18)
+    local caret_w = self.kb_open and (U(2) + U(3)) or 0
+    local rel_x = x - (self.field_rect.x + (self.field_pad or U(18)))
+    local scroll, c = self.scroll or 0, self.caret_letter or #letters
+    local prev, chosen = 0, scroll
+    for k = scroll + 1, #letters do
+        local w = measure(table.concat(letters, "", scroll + 1, k), face)
+        if k > c then w = w + caret_w end   -- the letters after the caret sit past it
+        if w >= rel_x then
+            chosen = (rel_x - prev < w - rel_x) and (k - 1) or k
+            break
+        end
+        prev = w
+        chosen = k
+    end
+    local bytes = 0
+    for k = 1, chosen do bytes = bytes + #letters[k] end
+    return bytes
 end
 
 function Prompt:rebuild()
@@ -373,8 +484,16 @@ function Prompt:onTapPrompt(_ev, ges)
         end
         return true
     end
-    if inside(self.field_rect, pos) and not self.kb_open then
-        self:setKeyboard(true)
+    if inside(self.field_rect, pos) then
+        -- the caret goes where the finger is (and the keyboard comes up if it was down)
+        self.pos = self:caretFromTap(pos.x)
+        if self.kb_open then
+            local prev_can, prev_error = self.shown_can, self.shown_error
+            self:rebuild()
+            self:refreshTyping(true, false, nil, prev_can, prev_error)
+        else
+            self:setKeyboard(true)
+        end
     end
     return true
 end
@@ -414,6 +533,7 @@ function RenamePrompt.show(opts)
     UIManager:show(Prompt:new{
         title = opts.title, text = opts.text, placeholder = opts.placeholder,
         save_text = opts.save_text, validate = opts.validate, on_save = opts.on_save,
+        allow_unchanged = opts.allow_unchanged,
     })
 end
 

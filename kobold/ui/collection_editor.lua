@@ -11,10 +11,13 @@
 -- it.
 --
 --   require("kobold.ui.collection_editor").show{
---       mode     = "new",            -- or "add" (no name field; button says Add),
+--       mode     = "new",            -- or "add" (no name field; button says Add, or
+--                                    -- action_label),
 --                                    -- or "search" (no name, no ticks: a tap opens the book)
 --       title    = "New collection",
 --       name_placeholder = "Collection name",   -- optional
+--       action_label = "Move",       -- optional: the button of "add" mode (default Add)
+--       empty_text = "...",          -- optional: shown when "add" mode has no books
 --       show_path = false,           -- a line with the folder each book is in
 --       root     = "/path/home",     -- show_path: paths are shown from here
 --       books    = entries,          -- see data/mybooks.lua
@@ -104,6 +107,8 @@ local Editor = InputContainer:extend{
     books = nil,
     validate = nil,
     on_done = nil,
+    action_label = nil,
+    empty_text = nil,
 }
 
 function Editor:init()
@@ -432,7 +437,10 @@ end
 
 function Editor:emptyText()
     if #self.all_books == 0 then
-        return (self.mode == "add") and _("Every book is already in this collection.") or _("No books yet.")
+        if self.mode == "add" then
+            return self.empty_text or _("Every book is already in this collection.")
+        end
+        return _("No books yet.")
     end
     return _("No books match.")
 end
@@ -455,7 +463,7 @@ function Editor:build()
     -- what the header and the hint show now, to refresh them only when they change
     self.shown_can, self.shown_name_error = can, self.name_error
     local searching = (self.mode == "search")
-    local label = (new and _("Create") or _("Add")) .. (n > 0 and (" (" .. n .. ")") or "")
+    local label = (new and _("Create") or (self.action_label or _("Add"))) .. (n > 0 and (" (" .. n .. ")") or "")
     local create, create_w = HorizontalSpan:new{ width = 0 }, 0
     if not searching then
         create, create_w = pill(label, U(40), can and BLACK or C_FIELD, can and WHITE or C_PLACEHOLDER, true)

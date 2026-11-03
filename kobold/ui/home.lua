@@ -251,15 +251,11 @@ function KoboldHome:build()
         files = self.all_books,
         state = prev_state,
         onTapFile = function(file) KoboldReader.tapOpen(self, file) end,
-        onHoldFile = function(file, anchor)
-            local W_ = Screen:getWidth()
-            require("kobold.ui.book_menu").show{
-                file = file, screen = self, anchor = anchor,
-                align = anchor.x < W_ / 2 and "left" or "right",
-                on_change = function()
-                    if self.onKoboldReturn then self:onKoboldReturn() end
-                end,
-            }
+        -- Holding a book opens its details page directly (no menu of rows).
+        onHoldFile = function(file, _anchor)
+            require("kobold.ui.book_details").show(file, self, function()
+                if self.onKoboldReturn then self:onKoboldReturn() end
+            end)
         end,
     }
     self.shelf_rect = Geom:new{ x = margin, y = y_lib, w = content_w, h = shelf_h }
@@ -304,17 +300,11 @@ function KoboldHome:build()
         if item then KoboldReader.tapOpen(self, item.file) end
     end)
     KoboldTaps.hold(self, "KoboldTopRowHold", margin, y_read, content_w, top_h, function(ges)
-        local item, x = coverAt(ges)
+        local item = coverAt(ges)
         if not item then return end
-        local vx = math.max(x, margin)
-        require("kobold.ui.book_menu").show{
-            file = item.file, screen = self,
-            anchor = Geom:new{ x = vx, y = y_read, w = math.min(top_w, margin + content_w - vx), h = top_h },
-            align = vx < W / 2 and "left" or "right",
-            on_change = function()
-                if self.onKoboldReturn then self:onKoboldReturn() end
-            end,
-        }
+        require("kobold.ui.book_details").show(item.file, self, function()
+            if self.onKoboldReturn then self:onKoboldReturn() end
+        end)
     end)
 
     self[1] = FrameContainer:new{

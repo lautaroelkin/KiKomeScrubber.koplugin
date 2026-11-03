@@ -8,10 +8,12 @@
 -- so they run with `self` as the screen, like the ones in mybooks.lua.
 
 local ConfirmSheet = require("kobold.ui.confirm_sheet")
+local FileActions  = require("kobold.ui.file_actions")
 local RenamePrompt = require("kobold.ui.rename_prompt")
 local Toast        = require("kobold.ui.toast")
 local Clipboard    = require("kobold.data.clipboard")
 local FileOps      = require("kobold.data.fileops")
+local KoboldMyBooksData = require("kobold.data.mybooks")
 local lfs          = require("libs/libkoreader-lfs")
 local _            = require("gettext")
 
@@ -60,17 +62,8 @@ function Methods:showSelectionMenu(rect)
     require("kobold.ui.book_menu").show{ screen = self, anchor = rect, align = "right", items = items }
 end
 
--- Why books were left out of a paste, one short line.
-local function skippedText(plan_or_summary)
-    local s = plan_or_summary.skipped or {}
-    local parts = {}
-    local there = (s.same_dir or 0) + (s.exists or 0)
-    if there > 0 then parts[#parts + 1] = string.format(_("%d already there"), there) end
-    if (s.in_use or 0) > 0 then parts[#parts + 1] = string.format(_("%d open now"), s.in_use) end
-    if (s.missing or 0) > 0 then parts[#parts + 1] = string.format(_("%d not found"), s.missing) end
-    if (s.bad_dest or 0) > 0 then parts[#parts + 1] = _("folder not found") end
-    return table.concat(parts, ", ")
-end
+-- Why books were left out of a paste, one short line (shared: file_actions.lua).
+local skippedText = FileActions.skippedText
 
 -- Pastes the clipboard into the folder that is open.
 function Methods:pasteHere()
@@ -110,38 +103,13 @@ function Methods:runPaste(plan, mode)
     self:reload()
 end
 
--- Asks before deleting the selected books.
+-- Asks before deleting the selected books (the confirmation and the delete
+-- itself are shared with the book details: file_actions.lua).
 function Methods:confirmDelete()
-    local paths = Clipboard.selected()
-    if #paths == 0 then return end
-    local plan = FileOps.planDelete(paths)
-    if #plan.files == 0 then
-        local why = skippedText(plan)
-        Toast.show(_("Nothing to delete.") .. (why ~= "" and ("\n" .. why) or ""), { timeout = 4 })
-        return
-    end
-    local text = string.format(_("Delete %s? Their reading progress, history and collections go too. This cannot be undone."),
-        countText(#plan.files))
-    local why = skippedText(plan)
-    if why ~= "" then text = text .. "\n\n" .. _("Left out: ") .. why end
-    ConfirmSheet.show{
-        message = text,
-        confirm_text = _("Delete"),
-        on_confirm = function() self:runDelete(plan) end,
-    }
-end
-
-function Methods:runDelete(plan)
-    local working = Toast.working(_("Working…"))
-    local summary = FileOps.delete(plan)
-    Toast.dismiss(working)
-    Clipboard.exitSelect()
-    local lines = { string.format(_("%s deleted."), countText(summary.done)) }
-    if summary.failed > 0 then lines[#lines + 1] = string.format(_("%d failed."), summary.failed) end
-    local why = skippedText(summary)
-    if why ~= "" then lines[#lines + 1] = _("Left out: ") .. why end
-    Toast.show(table.concat(lines, "\n"), { timeout = 4 })
-    self:reload()
+    FileActions.confirmDelete(Clipboard.selected(), function()
+        Clipboard.exitSelect()
+        self:reload()
+    end)
 end
 
 -- New folder: the full-screen editor (collection_editor.lua) asks for a name
@@ -173,29 +141,47 @@ function Methods:newFolder()
                 Toast.error(_("The folder could not be created."))
                 return
             end
-            local files = {}
-            for file in pairs(picked) do files[#files + 1] = file end
-            if #files == 0 then
-                self:reload()
-                return
-            end
-            table.sort(files)
-            local plan = FileOps.plan(files, path, "cut")
-            if #plan.moves == 0 then
-                local why = skippedText(plan)
-                Toast.show(_("Nothing to move.") .. (why ~= "" and ("\n" .. why) or ""), { timeout = 4 })
-                self:reload()
-                return
-            end
-            local working = Toast.working(_("Working…"))
-            local summary = FileOps.run(plan, "cut")
-            Toast.dismiss(working)
-            local lines = { string.format(_("%s moved."), countText(summary.done)) }
-            if summary.failed > 0 then lines[#lines + 1] = string.format(_("%d failed."), summary.failed) end
-            local why = skippedText(summary)
-            if why ~= "" then lines[#lines + 1] = _("Left out: ") .. why end
-            Toast.show(table.concat(lines, "\n"), { timeout = 4 })
-            self:reload()
+            self:moveBooksInto(path, picked)
+        end,
+    }
+end
+
+-- Moves the picked books ({ [file] = true }) into `path`, as Move + Paste here
+-- does, and reports what happened. New folder and Move to ... use it.
+function Methods:moveBooksInto(path, picked)
+    local files = {}
+    for file in pairs(picked) do files[#files + 1] = file end
+    if #files == 0 then
+        self:reload()
+        return
+    end
+    table.sort(files)
+    FileActions.transfer(files, path, "cut", function() self:reload() end)
+end
+
+-- Move to <folder>: the plus of the Files tab. Opens the picker (the same one
+-- as New folder: each book shows the folder it is in now) with every book that
+-- is not in the open folder yet, and moves the ticked ones into it.
+function Methods:moveToFolder()
+    local folder = self:currentFolder()
+    local root = self:filesRoot()
+    local name = folder:match("([^/]+)/*$") or folder
+    local books = {}
+    for _i, b in ipairs(self.books) do
+        local dir = b.file and b.file:match("^(.*)/[^/]*$") or nil
+        if dir and dir ~= folder then books[#books + 1] = b end
+    end
+    books = KoboldMyBooksData.sort(books, "title_asc")
+    require("kobold.ui.collection_editor").show{
+        mode = "add",
+        title = string.format(_("Move to %s"), name),
+        action_label = _("Move"),
+        empty_text = _("Every book is already in this folder."),
+        books = books,
+        show_path = true,
+        root = root ~= "/" and root or nil,
+        on_done = function(_name, picked)
+            self:moveBooksInto(folder, picked)
         end,
     }
 end

@@ -8,6 +8,45 @@ local CoverBadge      = require("kobold.ui.cover_badge")
 
 local KoboldReader = {}
 
+-- The annotation to jump to once the book is open: { file, item }. The reader
+-- tells Kobold it is ready through Kobold:onReaderReady (main.lua), which
+-- calls runPendingGoto; a book that was parked and is brought back has no such
+-- event, so open() jumps by itself then.
+local pending_goto = nil
+
+-- Moves the open reader to `item` (an annotation: page, pos0, ...), the same
+-- way KOReader's own bookmark list does, so the jump is remembered in the
+-- location stack (the "back" link). `rui` defaults to the live reader.
+function KoboldReader.gotoAnnotation(rui, item)
+    if not item then return false end
+    if not rui then
+        local RU = package.loaded["apps/reader/readerui"]
+        rui = RU and RU.instance
+    end
+    if not (rui and rui.document) then return false end
+    local ok = pcall(function()
+        if rui.bookmark and rui.bookmark.gotoBookmark then
+            rui.bookmark:gotoBookmark(item.page, item.pos0)
+        elseif rui.document.info and rui.document.info.has_pages and rui.paging then
+            rui.paging:onGotoPage(tonumber(item.page) or tonumber(item.pageno))
+        elseif rui.rolling then
+            rui.rolling:onGotoXPointer(item.page, item.pos0)
+        end
+    end)
+    return ok
+end
+
+-- Called when the reader is ready (main.lua): jumps to the annotation that
+-- open() was asked for, if it is for this book.
+function KoboldReader.runPendingGoto(rui)
+    local p = pending_goto
+    if not p then return end
+    pending_goto = nil
+    if rui and rui.document and rui.document.file == p.file then
+        UIManager:nextTick(function() KoboldReader.gotoAnnotation(rui, p.item) end)
+    end
+end
+
 -- Closes `screen`, then opens the book with KOReader's reader (the same call
 -- SimpleUI uses). The screen is remembered so closing the book returns to it.
 -- A failure is shown on screen instead of being ignored.
@@ -16,7 +55,9 @@ local KoboldReader = {}
 -- opens (used by the mini cover in the navigation bar); pill_screen = the
 -- window that holds the cover with the "Opening" pill when that is not
 -- `screen` (Book Details); on_ready runs when the book is open, on_fail if it
--- could not be opened.
+-- could not be opened; annotation = a KOReader annotation (as saved in the book's
+-- sidecar) to jump to once the book is open, e.g. "Show in book" in the
+-- annotations list of Book Details.
 function KoboldReader.open(screen, file, opts)
     opts = opts or {}
     -- The same book is parked under KiKome: bring it back as it was, with
@@ -25,7 +66,18 @@ function KoboldReader.open(screen, file, opts)
     local Park = require("kobold.ui.park")
     if Park.isParked() and Park.parkedFile() == file and Park.unpark(screen) then
         KoboldSession.rememberScreen(screen)
+        if opts.annotation then
+            UIManager:nextTick(function() KoboldReader.gotoAnnotation(nil, opts.annotation) end)
+        end
         return
+    end
+    if opts.annotation then
+        local mine = { file = file, item = opts.annotation }
+        pending_goto = mine
+        -- never left waiting for a book that did not open
+        UIManager:scheduleIn(60, function()
+            if pending_goto == mine then pending_goto = nil end
+        end)
     end
     -- The screen is parked, not closed: it stays under the reader so it
     -- can come back at once when the book closes (see session.lua).
@@ -66,6 +118,7 @@ function KoboldReader.open(screen, file, opts)
                 end or nil)
         end)
         if not ok then
+            pending_goto = nil
             KoboldReader.opened(pill_screen, true)
             if opts.on_fail then opts.on_fail() end
             require("kobold.ui.toast").error(_("Could not open the book: ") .. tostring(err), { timeout = 6 })

@@ -14,7 +14,12 @@
 --       message      = "The books stay in your library.",
 --       confirm_text = "Remove",                 -- default "Confirm"
 --       cancel_text  = "Cancel",                 -- default "Cancel"
---       on_confirm   = function() end,
+--       toggle       = {                         -- optional: a row to tick between the message
+--           label  = "Keep a backup copy",       -- and the pills (square-dot ticked, square not)
+--           detail = "Book.epub.kikome.bak",     -- optional smaller line under the label
+--           value  = true,                       -- how it starts (default true)
+--       },
+--       on_confirm   = function(ticked) end,     -- `ticked`: the toggle's value (nil with no toggle)
 --       on_cancel    = function() end,           -- optional (also runs on a tap outside)
 --   }
 
@@ -64,6 +69,7 @@ local Sheet = InputContainer:extend{
     message = nil,
     confirm_text = nil,
     cancel_text = nil,
+    toggle = nil,
     on_confirm = nil,
     on_cancel = nil,
 }
@@ -132,6 +138,37 @@ function Sheet:build()
         y = y + self.msg:getSize().h + U(20)
     end
 
+    -- The row to tick: the box, the label and (smaller, under it) the detail.
+    self.toggle_row = nil
+    if self.toggle then
+        local size = U(26)
+        local text_x = U(38)
+        local text_w = inner - text_x
+        self.toggle_on = keep(OptionSheet.iconWidget("square-dot", size, BLACK))
+        self.toggle_off = keep(OptionSheet.iconWidget("square", size, BLACK))
+        self.toggle_size = size
+        self.toggle_label = keep(TextWidget:new{
+            text = self.toggle.label or "", face = KoboldWidgets.face(16), bold = true, max_width = text_w,
+        })
+        local label_h = self.toggle_label:getSize().h
+        local row_h = math.max(size, label_h)
+        self.toggle_detail = nil
+        if self.toggle.detail and self.toggle.detail ~= "" then
+            -- a long file name is cut at its start, so its ending stays in view
+            local detail_face = KoboldWidgets.face(14)
+            self.toggle_detail = keep(TextWidget:new{
+                text = tailText(self.toggle.detail, detail_face, text_w), face = detail_face,
+                fgcolor = C_TEXT, max_width = text_w,
+            })
+            row_h = math.max(size, label_h + U(2) + self.toggle_detail:getSize().h)
+        end
+        row_h = row_h + U(16)   -- room to tap
+        self.toggle_row = { x = inset, y = y - U(8), w = inner, h = row_h }
+        self.toggle_text_x = text_x
+        self.toggle_label_h = label_h
+        y = y - U(8) + row_h + U(14)
+    end
+
     -- Two pills of the same width.
     local pill_h, gap = U(44), U(12)
     local pill_w = math.floor((inner - gap) / 2)
@@ -174,6 +211,16 @@ function Sheet:paintTo(bb, x, y)
     end
     if self.heading then self.heading:paintTo(bb, x + self.heading_pos.x, top + self.heading_pos.y) end
     if self.msg then self.msg:paintTo(bb, x + self.msg_pos.x, top + self.msg_pos.y) end
+    if self.toggle_row then
+        local r = self.toggle_row
+        local icon = self.toggle.value and self.toggle_on or self.toggle_off
+        local ty = top + r.y + U(8)
+        icon:paintTo(bb, x + r.x, ty)
+        self.toggle_label:paintTo(bb, x + r.x + self.toggle_text_x, ty)
+        if self.toggle_detail then
+            self.toggle_detail:paintTo(bb, x + r.x + self.toggle_text_x, ty + self.toggle_label_h + U(2))
+        end
+    end
     local function pill(p, color, label)
         bb:paintRoundedRect(x + p.x, top + p.y, p.w, p.h, color, math.floor(p.h / 2))
         local sz = label:getSize()
@@ -200,7 +247,16 @@ function Sheet:onTapSheet(_ev, ges)
     if hit(self.ok_pill, self.top, pos) then
         UIManager:close(self)
         local fn = self.on_confirm
-        if fn then UIManager:nextTick(fn) end
+        -- the toggle's value as it is (false stays false); nil only with no toggle
+        local ticked
+        if self.toggle then ticked = self.toggle.value end
+        if fn then UIManager:nextTick(function() fn(ticked) end) end
+        return true
+    end
+    if self.toggle_row and hit(self.toggle_row, self.top, pos) then
+        self.toggle.value = not self.toggle.value
+        local r = self.toggle_row
+        UIManager:setDirty(self, "ui", Geom:new{ x = r.x, y = self.top + r.y, w = r.w, h = r.h })
         return true
     end
     if hit(self.cancel_pill, self.top, pos) then return self:cancel() end
@@ -233,6 +289,10 @@ function ConfirmSheet.show(opts)
     local sheet = Sheet:new{
         title = opts.title, title_tail = opts.title_tail, message = opts.message,
         confirm_text = opts.confirm_text, cancel_text = opts.cancel_text,
+        toggle = opts.toggle and {
+            label = opts.toggle.label, detail = opts.toggle.detail,
+            value = opts.toggle.value ~= false,
+        } or nil,
         on_confirm = opts.on_confirm, on_cancel = opts.on_cancel,
     }
     UIManager:show(sheet, "ui", sheet:region())

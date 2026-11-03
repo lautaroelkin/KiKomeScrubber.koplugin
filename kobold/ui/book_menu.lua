@@ -1,9 +1,9 @@
 -- kobold/ui/book_menu.lua — Kobold
 -- The small menu for one book: Read now, View Details (Kobold's details
--- page) and, only in the Library tab, KOReader Details (the file browser's own
--- book menu). Opened from a book's "..." in My Books and by holding one of
--- Home's recent books (there without the KOReader row: a book is edited from
--- the Library tab only).
+-- page) and, only in the Library tab, Edit book (the details page opened on
+-- its Edit screen). Opened from a book's "..." in My Books and by holding a
+-- book in the Library's Files tab or inside a collection. Holding a book in
+-- Home or in the other Library tabs opens the details page directly.
 -- A box with rounded corners next to what opened it: below it when there is
 -- room, otherwise above it (or beside it, for a row's "...").
 
@@ -40,7 +40,7 @@ local KoboldBookMenu = InputContainer:extend{
     align = "right", -- "right": box ends at the anchor's right edge; "left": starts at its left
     side = false,    -- true: beside the anchor (to its left)
     on_change = nil, -- runs after the KOReader menu changed something
-    koreader = false, -- true (Library tab): the KOReader Details row, and "..." on the details page
+    koreader = false, -- true (Library tab): the Edit book row (opens the details page on Edit)
     on_remove = nil, -- inside a collection: adds "Remove from collection" and runs this when tapped
     on_select = nil, -- Files tab: adds "Select" and runs this when tapped
     items = nil,     -- a list of { text, icon, action = function, bold? } that replaces the book rows
@@ -90,10 +90,10 @@ function KoboldBookMenu:build()
             items[#items + 1] = { text = _("Select"), action = "select", icon = { "crop", "square-dot" } }
         end
         if self.koreader then
-            items[#items + 1] = { text = _("KOReader Details"), action = "koreader", icon = "square-arrow-right-enter" }
+            items[#items + 1] = { text = _("Edit book"), action = "edit", icon = "pencil" }
         end
         if self.on_remove then
-            items[#items + 1] = { text = _("Remove from collection"), action = "remove", icon = "trash-2" }
+            items[#items + 1] = { text = _("Remove from collection"), action = "remove", icon = "square-minus" }
         end
     end
     local list = VerticalGroup:new{ align = "left" }
@@ -208,12 +208,9 @@ function KoboldBookMenu:run(action)
         if self.on_select then self.on_select() end
     elseif action == "remove" then
         if self.on_remove then self.on_remove() end
-    elseif action == "koreader" then
-        if not KoboldWidgets.showBookMenu(self.file, self.on_change) then
-            UIManager:show(require("ui/widget/infomessage"):new{
-                text = _("The KOReader book menu is not available."),
-            })
-        end
+    elseif action == "edit" then
+        -- Straight to the Edit screen of the details page (the pencil).
+        require("kobold.ui.book_details").show(self.file, self.screen, self.on_change, false, "edit")
     end
 end
 

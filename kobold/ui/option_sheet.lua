@@ -40,6 +40,10 @@
 --   OptionSheet.show{ title = "Filter", anchor = popup_dimen,
 --                     bottom_radius = popup_radius, rows = { ... } }
 --
+-- on_close (optional) runs once when the sheet goes away, however it closes (a
+-- tap outside, swipe down, a row with close = true). Use it when the choices
+-- change what is behind the sheet: draw that again here, not on every pick.
+--
 -- Icons are svg files in the plugin's icons folder (grid.svg, list.svg, ...).
 -- "grid", "list" and "adjust" also have drawn fallbacks if the file is missing.
 
@@ -141,6 +145,7 @@ local Sheet = InputContainer:extend{
     anchor = nil,   -- Geom of the window it sits at the bottom of (nil: the screen)
     corner = nil,   -- radius of the top corners
     bottom_corner = nil,  -- radius of the bottom corners when anchored to a window
+    on_close = nil,       -- runs once when the sheet goes away
 }
 
 function Sheet:init()
@@ -416,6 +421,11 @@ end
 function Sheet:onCloseWidget()
     self:release()
     UIManager:setDirty(nil, "ui", self:region())
+    if self.on_close then
+        local cb = self.on_close
+        self.on_close = nil
+        UIManager:nextTick(cb)
+    end
 end
 
 -- Open the sheet. opts.title, opts.anchor and opts.radius (both optional, see
@@ -434,6 +444,7 @@ function OptionSheet.show(opts)
     local sheet = Sheet:new{
         title = opts.title or "Options", rows = rows,
         anchor = opts.anchor, corner = opts.radius, bottom_corner = opts.bottom_radius,
+        on_close = opts.on_close,
     }
     -- Shown with its own area, not the whole screen (the sheet's window is
     -- full-screen but only its panel is drawn).

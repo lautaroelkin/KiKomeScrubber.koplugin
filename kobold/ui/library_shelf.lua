@@ -1773,6 +1773,68 @@ local function parkHold(home, name)
     KoboldTaps.hold(home, name, -1000, -1000, 1, 1, function() end)
 end
 
+-- Long-press on a card: a folder (Home chip) or a collection (Collections
+-- chip) shows the very same menu as holding it in the Library (Files tab and
+-- Collections tab). Series, authors and genres have none.
+function LibraryShelf:cardHasMenu(item)
+    if type(item) ~= "table" then return false end
+    if item.path then return self.tab == "folders" and not self.drill end
+    return self.tab == "collections" and not self.drill and item.name ~= nil
+end
+
+-- The Library's folder and collection menus are methods of its screen
+-- (mybooks_files.lua, mybooks_collections.lua) that only need a few things of
+-- it; this stands in for that screen, wired to Home and to this shelf.
+function LibraryShelf:libraryHost(item)
+    local shelf, home = self, self.home
+    local host = {}
+    function host:reload()
+        KoboldLibrary.invalidate()
+        BookLang.forget()
+        Genres.forget()
+        if home and home.onKoboldReturn then home:onKoboldReturn() end
+    end
+    function host:scheduleReload()
+        UIManager:nextTick(function() host:reload() end)
+    end
+    function host:openFolder(dir)
+        shelf:openGroup({ path = dir, name = baseName(dir) })
+    end
+    function host:openGroup(_group)
+        shelf:openGroup(item)
+    end
+    -- addBookToCollection reads the library's books; they are loaded only then.
+    return setmetatable(host, { __index = function(t, k)
+        if k == "books" then
+            local books = MyBooksData.getBooks()
+            rawset(t, "books", books)
+            return books
+        end
+        -- the folder and collection actions of the Library screen, as they are
+        local files = require("kobold.ui.mybooks_files")
+        local collections = require("kobold.ui.mybooks_collections")
+        return files[k] or collections[k]
+    end })
+end
+
+function LibraryShelf:holdCard(item, anchor)
+    local host = self:libraryHost(item)
+    local W = Screen:getWidth()
+    local align = anchor.x < W / 2 and "left" or "right"
+    if item.path then
+        host:showFolderMenu(item.path, anchor, align)
+    else
+        -- the collection as the Library's group: its key and its shown name
+        local key = tostring(item.name)
+        local title = key
+        local ok, RC = pcall(require, "readcollection")
+        if ok and RC and key == (RC.default_collection_name or "favorites") then
+            title = require("gettext")("Favorites")
+        end
+        host:showCollectionOptions({ key = key, name = title }, anchor, align)
+    end
+end
+
 function LibraryShelf:registerTaps()
     local home = self.home
     if not home or not self.dimen then return end
@@ -1837,7 +1899,13 @@ function LibraryShelf:registerTaps()
             local x, y, w, h = ox + rc.x, oy + rc.y, rc.w, rc.h
             if kind == "cards" then
                 KoboldTaps.add(home, "shelf_grid_" .. i, x, y, w, h, function() self:openGroup(item) end)
-                parkHold(home, "shelf_grid_hold_" .. i)
+                if self:cardHasMenu(item) then
+                    KoboldTaps.hold(home, "shelf_grid_hold_" .. i, x, y, w, h, function()
+                        self:holdCard(item, Geom:new{ x = x, y = y, w = w, h = h })
+                    end)
+                else
+                    parkHold(home, "shelf_grid_hold_" .. i)
+                end
             else
                 KoboldTaps.add(home, "shelf_grid_" .. i, x, y, w, h, function()
                     if self.onTapFile then self.onTapFile(item) end
