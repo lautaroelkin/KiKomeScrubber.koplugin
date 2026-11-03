@@ -255,6 +255,10 @@ end
 -- The reader menu has built its items by now (or is about to be shown).
 function Kobold:onReaderReady()
     self:_wireFastFileBrowserTab(true)
+    -- "Show in book" from the annotations list of Book Details: the book is
+    -- open now, so it can jump to the annotation it was opened for.
+    local Reader = package.loaded["kobold.ui.reader"]
+    if Reader and Reader.runPendingGoto then Reader.runPendingGoto(self.ui) end
 end
 
 function Kobold:onShowReaderMenu()
