@@ -15,7 +15,7 @@ local Toast       = require("kobold.ui.toast")
 local UIManager   = require("ui/uimanager")
 local lfs         = require("libs/libkoreader-lfs")
 local logger      = require("logger")
-local _           = require("gettext")
+local _           = require("kobold.i18n")
 local KoboldMeta  = require("kobold.meta")
 
 local Updater = {}
@@ -114,9 +114,9 @@ local function latestRelease()
     if not body then return nil, err end
     local ok, JSON = pcall(require, "rapidjson")
     if not ok then ok, JSON = pcall(require, "json") end
-    if not ok then return nil, "no JSON reader" end
+    if not ok then return nil, _("no JSON reader") end
     local ok_d, data = pcall(JSON.decode, body)
-    if not ok_d or type(data) ~= "table" or not data.tag_name then return nil, "bad release data" end
+    if not ok_d or type(data) ~= "table" or not data.tag_name then return nil, _("bad release data") end
 
     local url
     for _i, asset in ipairs(data.assets or {}) do
