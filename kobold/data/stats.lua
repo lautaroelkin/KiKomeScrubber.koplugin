@@ -2,6 +2,7 @@
 -- Reading statistics from KOReader's statistics.sqlite3. Builds no widgets.
 
 local lfs             = require("libs/libkoreader-lfs")
+local _               = require("kobold.i18n")
 
 local KoboldStats = {}
 
@@ -136,46 +137,53 @@ function KoboldStats.streakDays()
     return days
 end
 
-local function hoursText(seconds, suffix)
+-- Whole sentences, one per case, so each can be translated as it is (a
+-- language may not put the number and the word in this order). `less` is
+-- the text for under an hour; `one` and `many` take the number of hours.
+local function hoursText(seconds, less, one, many)
     local h = math.floor(seconds / 3600 + 0.5)
-    if seconds > 0 and h == 0 then return "Less than 1 hour " .. suffix end
-    return h .. (h == 1 and " hour " or " hours ") .. suffix
+    if seconds > 0 and h == 0 then return less end
+    return string.format(h == 1 and one or many, h)
 end
 
+-- `one` or `many` (formats with %d), by the number.
 local function plural(n, one, many)
-    return n .. " " .. (n == 1 and one or many)
+    return string.format(n == 1 and one or many, n)
 end
 
 -- Lines the Home reading stats can show (Kobold Settings), in menu order.
 -- text() returns the line, or nil when the statistics are unavailable.
 KoboldStats.LINES = {
-    { id = "total_hours", label = "Total hours read", text = function()
+    { id = "total_hours", label = _("Total hours read"), text = function()
         local h = KoboldStats.totalReadHours()
-        return h and (h .. " hours read totally")
+        return h and string.format(_("%s hours read totally"), tostring(h))
     end },
-    { id = "week_hours", label = "Hours this week", text = function()
+    { id = "week_hours", label = _("Hours this week"), text = function()
         local s = KoboldStats.weekReadSeconds()
-        return s and hoursText(s, "this week")
+        return s and hoursText(s, _("Less than 1 hour this week"),
+            _("%d hour this week"), _("%d hours this week"))
     end },
-    { id = "today_time", label = "Time read today", text = function()
+    { id = "today_time", label = _("Time read today"), text = function()
         local s = secondsSince(todayStart())
         if not s then return nil end
-        if s < 3600 then return plural(math.floor(s / 60 + 0.5), "minute", "minutes") .. " today" end
-        return hoursText(s, "today")
+        if s < 3600 then
+            return plural(math.floor(s / 60 + 0.5), _("%d minute today"), _("%d minutes today"))
+        end
+        return hoursText(s, _("Less than 1 hour today"), _("%d hour today"), _("%d hours today"))
     end },
-    { id = "today_pages", label = "Pages read today", text = function()
+    { id = "today_pages", label = _("Pages read today"), text = function()
         local n = pagesSince(todayStart())
-        return n and (plural(n, "page", "pages") .. " today")
+        return n and plural(n, _("%d page today"), _("%d pages today"))
     end },
-    { id = "week_pages", label = "Pages read this week", text = function()
+    { id = "week_pages", label = _("Pages read this week"), text = function()
         local n = pagesSince(weekStart())
-        return n and (plural(n, "page", "pages") .. " this week")
+        return n and plural(n, _("%d page this week"), _("%d pages this week"))
     end },
-    { id = "streak", label = "Reading streak", text = function()
+    { id = "streak", label = _("Reading streak"), text = function()
         local n = KoboldStats.streakDays()
-        return n and (plural(n, "day", "days") .. " in a row")
+        return n and plural(n, _("%d day in a row"), _("%d days in a row"))
     end },
-    { id = "none", label = "Nothing", text = function() return nil end },
+    { id = "none", label = _("Nothing"), text = function() return nil end },
 }
 
 -- The line with this id, or nil.
@@ -197,7 +205,7 @@ function KoboldStats.secondsPerPage(md5s)
     if fp and m and m.fp == fp then return m.result end
 
     withDB(function(conn)
-        for _, md5 in ipairs(md5s) do
+        for _i, md5 in ipairs(md5s) do
             if md5:match("^%x+$") then
                 local id = firstValue(conn, string.format(
                     "SELECT id FROM book WHERE md5 = '%s' ORDER BY last_open DESC LIMIT 1;", md5), 1)

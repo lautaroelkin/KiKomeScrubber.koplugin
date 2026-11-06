@@ -26,6 +26,7 @@
 --                           Library (My Books), kept apart from the Home chip
 --   Chips.signature()       a string that changes when the chips change
 
+local _ = require("kobold.i18n")
 local M = {}
 
 -- The most chips that can be on at once. Chips that are off do not count,
@@ -37,9 +38,9 @@ local KEY = "kikome_shelf_chips"
 
 -- Built-in chips and their names. Their order here is the order they start in.
 local BUILTIN = {
-    folders = "Home", home = "Library", series = "Series",
-    authors = "Authors", collections = "Collections",
-    favorites = "Favorites", tbr = "To be read", genres = "Genres",
+    folders = _("Home"), home = _("Library"), series = _("Series"),
+    authors = _("Authors"), collections = _("Collections"),
+    favorites = _("Favorites"), tbr = _("To be read"), genres = _("Genres"),
 }
 local BUILTIN_ORDER = { "folders", "home", "series", "authors", "collections", "favorites", "tbr", "genres" }
 
@@ -53,7 +54,7 @@ local SHOWN_KEY = "kikome_shelf_collections_shown"
 
 -- The name a folder chip shows. The home folder itself is "" (no name).
 local function labelFor(path)
-    if path == "" then return "All books" end
+    if path == "" then return _("All books") end
     return path:match("([^/]+)$") or path
 end
 

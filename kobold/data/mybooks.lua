@@ -10,7 +10,7 @@ local KoboldPerf      = require("kobold.data.perf")
 local Chips             = require("kobold.data.chips")
 local BookLang          = require("kobold.data.booklang")
 local Genres            = require("kobold.data.genres")
-local _               = require("gettext")
+local _               = require("kobold.i18n")
 
 local KoboldMyBooksData = {}
 

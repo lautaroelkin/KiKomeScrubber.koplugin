@@ -11,7 +11,7 @@
 --   Tabs.first()          id of the first tab that is on
 --   Tabs.signature()      a string that changes when the tabs change
 
-local _ = require("gettext")
+local _ = require("kobold.i18n")
 
 local M = {}
 

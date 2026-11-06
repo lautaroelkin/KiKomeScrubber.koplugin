@@ -39,6 +39,7 @@
 --   Metadata.announce(file)              everything on screen shows the new data
 -- The writers return true when they saved.
 
+local _ = require("kobold.i18n")
 local Metadata = {}
 
 Metadata.FIELDS = {
@@ -295,10 +296,10 @@ function Metadata.knownKeywords()
 end
 
 local LANGUAGE_NAMES = {
-    en = "English", es = "Spanish", fr = "French", de = "German", it = "Italian",
-    pt = "Portuguese", ru = "Russian", ja = "Japanese", zh = "Chinese", ko = "Korean",
-    ar = "Arabic", la = "Latin", ca = "Catalan", nl = "Dutch", pl = "Polish",
-    sv = "Swedish", tr = "Turkish", el = "Greek", he = "Hebrew", hi = "Hindi",
+    en = _("English"), es = _("Spanish"), fr = _("French"), de = _("German"), it = _("Italian"),
+    pt = _("Portuguese"), ru = _("Russian"), ja = _("Japanese"), zh = _("Chinese"), ko = _("Korean"),
+    ar = _("Arabic"), la = _("Latin"), ca = _("Catalan"), nl = _("Dutch"), pl = _("Polish"),
+    sv = _("Swedish"), tr = _("Turkish"), el = _("Greek"), he = _("Hebrew"), hi = _("Hindi"),
 }
 local COMMON_LANGUAGES = {
     "en", "es", "fr", "de", "it", "pt", "ru", "ja", "zh", "ko", "ar", "la", "ca", "nl", "pl", "sv",
@@ -457,12 +458,12 @@ function Metadata.backupPath(file)
 end
 
 function Metadata.writeToBook(file, opts)
-    if not Metadata.isEpub(file) then return false, "Only EPUB books can be written." end
+    if not Metadata.isEpub(file) then return false, _("Only EPUB books can be written.") end
     local changes = Metadata.bookChanges(file)
-    if not changes then return false, "There is nothing to write." end
+    if not changes then return false, _("There is nothing to write.") end
     local custom = Metadata.custom(file)
     local ok_mod, EpubWriter = pcall(require, "kobold.data.epub_writer")
-    if not ok_mod then return false, "The EPUB writer could not be loaded." end
+    if not ok_mod then return false, _("The EPUB writer could not be loaded.") end
     local ok_run, ok, result = pcall(EpubWriter.rewrite, file, changes, opts)
     if not ok_run then return false, tostring(ok) end
     if not ok then return false, result end

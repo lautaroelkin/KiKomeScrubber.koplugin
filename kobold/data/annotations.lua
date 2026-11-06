@@ -31,7 +31,7 @@
 --     date, chapter, page (number or nil) }
 
 local Blitbuffer = require("ffi/blitbuffer")
-local _          = require("gettext")
+local _          = require("kobold.i18n")
 
 local Annotations = {}
 

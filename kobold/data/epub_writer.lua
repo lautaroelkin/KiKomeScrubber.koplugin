@@ -27,6 +27,7 @@
 -- (unless no backup was asked for) and only then is the temporary file put in
 -- its place. Any failure leaves the book as it was.
 
+local _ = require("kobold.i18n")
 local Archiver = require("ffi/archiver")
 local SLAXML = require("kobold.vendor.slaxdom")
 
@@ -50,7 +51,7 @@ end
 
 local function child_elements(el)
     local out = {}
-    for _, kid in ipairs(el.kids) do
+    for _i, kid in ipairs(el.kids) do
         if is_element(kid) then out[#out + 1] = kid end
     end
     return out
@@ -71,7 +72,7 @@ end
 local function attr_set(el, name, value)
     el.attr = el.attr or {}
     el.attr[name] = value
-    for _, a in ipairs(el.attr) do
+    for _i, a in ipairs(el.attr) do
         if a.name == name and not a.nsPrefix then
             a.value = value
             return
@@ -82,7 +83,7 @@ end
 
 local function get_text(el)
     local parts = {}
-    for _, kid in ipairs(el.kids) do
+    for _i, kid in ipairs(el.kids) do
         if kid.type == "text" then parts[#parts + 1] = kid.value end
     end
     return table.concat(parts)
@@ -94,7 +95,7 @@ end
 
 local function new_element(name, nsPrefix, attrs, text)
     local el = { type = "element", name = name, nsPrefix = nsPrefix, kids = {}, attr = {} }
-    for _, a in ipairs(attrs or {}) do
+    for _i, a in ipairs(attrs or {}) do
         el.attr[a[1]] = a[2]
         table.insert(el.attr, { type = "attribute", name = a[1], value = a[2] })
     end
@@ -110,14 +111,14 @@ local function append_child(metadata, el)
 end
 
 local function find_metadata(pkg)
-    for _, el in ipairs(child_elements(pkg)) do
+    for _i, el in ipairs(child_elements(pkg)) do
         if el.name == "metadata" then return el end
     end
     return nil
 end
 
 local function detect_dc_prefix(metadata)
-    for _, el in ipairs(child_elements(metadata)) do
+    for _i, el in ipairs(child_elements(metadata)) do
         if el.nsURI == DC_NS and el.nsPrefix then return el.nsPrefix end
     end
     return "dc"
@@ -145,7 +146,7 @@ local function calibre_index(v)
 end
 
 local function find_meta(metadata, predicate)
-    for _, el in ipairs(child_elements(metadata)) do
+    for _i, el in ipairs(child_elements(metadata)) do
         if is_meta(el) and predicate(el) then return el end
     end
     return nil
@@ -153,7 +154,7 @@ end
 
 local function remove_meta(metadata, predicate)
     local kept = {}
-    for _, kid in ipairs(metadata.kids) do
+    for _i, kid in ipairs(metadata.kids) do
         if not (is_meta(kid) and predicate(kid)) then kept[#kept + 1] = kid end
     end
     metadata.kids = kept
@@ -161,7 +162,7 @@ end
 
 local function remove_dc(metadata, localname)
     local kept = {}
-    for _, kid in ipairs(metadata.kids) do
+    for _i, kid in ipairs(metadata.kids) do
         if not is_dc(kid, localname) then kept[#kept + 1] = kid end
     end
     metadata.kids = kept
@@ -169,7 +170,7 @@ end
 
 local function dc_texts(metadata, localname)
     local out = {}
-    for _, el in ipairs(child_elements(metadata)) do
+    for _i, el in ipairs(child_elements(metadata)) do
         if is_dc(el, localname) then out[#out + 1] = get_text(el) end
     end
     return out
@@ -184,7 +185,7 @@ local function same_list(a, b)
 end
 
 local function set_dc_text(metadata, localname, prefix, value)
-    for _, el in ipairs(child_elements(metadata)) do
+    for _i, el in ipairs(child_elements(metadata)) do
         if is_dc(el, localname) then
             set_text(el, value)
             return
@@ -198,7 +199,7 @@ end
 local function replace_dc_list(metadata, localname, prefix, values)
     if same_list(dc_texts(metadata, localname), values) then return end
     local refined = {}
-    for _, el in ipairs(child_elements(metadata)) do
+    for _i, el in ipairs(child_elements(metadata)) do
         if is_dc(el, localname) then
             local id = attr_get(el, "id")
             if id and id ~= "" then refined["#" .. id] = true end
@@ -211,7 +212,7 @@ local function replace_dc_list(metadata, localname, prefix, values)
             return r ~= nil and refined[r] == true
         end)
     end
-    for _, value in ipairs(values) do
+    for _i, value in ipairs(values) do
         append_child(metadata, new_element(localname, prefix, nil, value))
     end
 end
@@ -239,7 +240,7 @@ end
 -- The collection that is a series (a book can also belong to collections of
 -- another type, which are left alone).
 local function find_series_collection(metadata)
-    for _, el in ipairs(child_elements(metadata)) do
+    for _i, el in ipairs(child_elements(metadata)) do
         if is_meta(el) and attr_get(el, "property") == "belongs-to-collection" then
             local id = attr_get(el, "id")
             if id and id ~= "" then
@@ -307,7 +308,7 @@ end
 local function parse_metadata(opf_xml)
     local ok, doc = pcall(function() return SLAXML:dom(opf_xml) end)
     if not ok or not doc or not doc.root then
-        return nil, nil, "Could not parse the OPF."
+        return nil, nil, _("Could not parse the OPF.")
     end
     local metadata = find_metadata(doc.root)
     if not metadata then
@@ -324,7 +325,7 @@ end
 
 local function extract_named(path, names)
     local reader = open_reader(path)
-    if not reader then return nil, "Could not open the EPUB." end
+    if not reader then return nil, _("Could not open the EPUB.") end
     local out = {}
     for entry in reader:iterate() do
         if names[entry.path] and out[entry.path] == nil then
@@ -362,7 +363,7 @@ local function edit_opf(opf_xml, changes)
 
     local ok, out = pcall(function() return SLAXML:xml(doc) end)
     if not ok or not out then
-        return nil, "Could not write the edited OPF."
+        return nil, _("Could not write the edited OPF.")
     end
     return out
 end
@@ -415,24 +416,24 @@ end
 function EpubWriter.rewrite(path, changes, opts)
     local keep_backup = not (opts and opts.backup == false)
     if not EpubWriter.isEpub(path) then
-        return false, "Only EPUB books can be written."
+        return false, _("Only EPUB books can be written.")
     end
     local got, err = extract_named(path, { ["META-INF/container.xml"] = true })
     if not got then return false, err end
     local container = got["META-INF/container.xml"]
     if not container then return false, "The book has no META-INF/container.xml." end
     local opf_path = opf_path_from_container(container)
-    if not opf_path then return false, "Could not find the OPF in the book." end
+    if not opf_path then return false, _("Could not find the OPF in the book.") end
 
     local reader = open_reader(path)
-    if not reader then return false, "Could not open the EPUB." end
+    if not reader then return false, _("Could not open the EPUB.") end
 
     local tmp = path .. ".kikome.tmp"
     os.remove(tmp)
     local writer = Archiver.Writer:new{}
     if not writer:open(tmp, "epub") then
         reader:close()
-        return false, "Could not create the temporary file."
+        return false, _("Could not create the temporary file.")
     end
 
     -- the mimetype goes first and stored, as an EPUB needs it
@@ -469,11 +470,11 @@ function EpubWriter.rewrite(path, changes, opts)
     end
     if not wrote_opf then
         os.remove(tmp)
-        return false, "The OPF was not found while repacking."
+        return false, _("The OPF was not found while repacking.")
     end
     if not validate_epub(tmp, opf_path) then
         os.remove(tmp)
-        return false, "The new file did not pass the check; the book was left as it was."
+        return false, _("The new file did not pass the check; the book was left as it was.")
     end
 
     local backup
@@ -482,14 +483,14 @@ function EpubWriter.rewrite(path, changes, opts)
         os.remove(backup)
         if not copy_file(path, backup) then
             os.remove(tmp)
-            return false, "Could not keep a copy of the book; it was left as it was."
+            return false, _("Could not keep a copy of the book; it was left as it was.")
         end
     end
 
     local ok_rename, rename_err = os.rename(tmp, path)
     if not ok_rename then
         os.remove(tmp)
-        return false, "Could not replace the book: " .. tostring(rename_err)
+        return false, string.format(_("Could not replace the book: %s"), tostring(rename_err))
     end
     return true, backup
 end

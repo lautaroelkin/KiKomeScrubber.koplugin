@@ -34,6 +34,12 @@ local DEFAULTS = {
     stats_line2_action = DEFAULT_ACTION,
     stats_label        = nil,            -- nil = "Reading Stats"
     battery            = "fill",         -- "fill" or "percent"
+    -- Status bar clock (see data/clock.lua). The 12 / 24-hour choice is not
+    -- here: the clock follows KOReader's own setting.
+    clock_layout       = "time",         -- "time", "day_time", "time_date", "time_numeric", "date", "two_lines" or "custom"
+    clock_date_order   = "dm",           -- "dm" (5 Nov) or "md" (Nov 5)
+    clock_year         = false,          -- add the year to the date
+    clock_pattern      = "%K, %a %e %b", -- the custom layout
     open_tap           = "koreader",     -- "koreader", "single" or "double"
     hot_park           = true,           -- leaving a book keeps it open under KiKome (see park.lua)
 }
