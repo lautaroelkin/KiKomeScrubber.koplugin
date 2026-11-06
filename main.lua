@@ -15,7 +15,7 @@ end
 
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local UIManager       = require("ui/uimanager")
-local _               = require("gettext")
+local _               = require("kobold.i18n")
 
 local START_WITH_VALUE = "kobold_home"
 local boot_handled = false  -- set once per KOReader session, on the file browser
@@ -68,6 +68,47 @@ local function patchStartWithMenu()
     end
 end
 
+-- Every KiKome window in KOReader's window stack: the screens (Home, My
+-- Books, ...) and whatever sits on them (book details, menus, a toast). They
+-- are all named "kobold_*". Also forgets the book parked under them.
+local function closeAllKoboldWindows()
+    local found = {}
+    for _i, entry in ipairs(UIManager._window_stack or {}) do
+        local w = entry.widget
+        if w and (w.kobold_tab or (type(w.name) == "string" and w.name:sub(1, 7) == "kobold_")) then
+            found[#found + 1] = w
+        end
+    end
+    for i = #found, 1, -1 do
+        local w = found[i]
+        pcall(function() UIManager:close(w) end)
+    end
+    local Park = package.loaded["kobold.ui.park"]
+    if Park then pcall(Park.noteRealClose) end
+    local Session = package.loaded["kobold.ui.session"]
+    if Session then pcall(Session.take) end
+end
+
+-- KOReader quits when its window stack is empty. Its Exit closes the file
+-- browser (or the book) and nothing else, so the KiKome screens left on top
+-- kept KOReader alive until "Exit KiKome" closed them. Exit and Restart (the
+-- file browser menu and the reader menu) now close KiKome first. Patched once
+-- per session; a menu without exitOrRestart is left as it is.
+local function patchExitMenus()
+    for _i, module_name in ipairs({ "apps/filemanager/filemanagermenu", "apps/reader/modules/readermenu" }) do
+        local ok, Menu = pcall(require, module_name)
+        if ok and type(Menu) == "table" and type(Menu.exitOrRestart) == "function"
+                and not Menu._kobold_exit_patched then
+            Menu._kobold_exit_patched = true
+            local orig = Menu.exitOrRestart
+            Menu.exitOrRestart = function(menu_self, ...)
+                pcall(closeAllKoboldWindows)
+                return orig(menu_self, ...)
+            end
+        end
+    end
+end
+
 -- This plugin was called Booko before. Moves its saved settings to the new
 -- names once, so the Start with choice and My Books filters are kept.
 local function migrateOldSettings()
@@ -90,6 +131,7 @@ end
 function Kobold:init()
     migrateOldSettings()
     patchStartWithMenu()
+    patchExitMenus()
     self:_extendMenuOrder()
     -- Windows hidden under Kobold must not refresh the screen (see the module).
     pcall(function() require("kobold.ui.repaint_guard").install() end)
@@ -212,9 +254,15 @@ function Kobold:onCloseDocument()
         if Park.isFinishing() or Park.isSwitching() then return end
     end
     if Session.returning() then
-        local _ = require("gettext")
+        local _ = require("kobold.i18n")
         require("kobold.ui.transition").show(_("Closing"))
     end
+end
+
+-- KOReader's "Exit" event (the Exit KOReader action of gestures and profiles):
+-- KiKome closes its windows so KOReader can quit. The event goes on to KOReader.
+function Kobold:onExit()
+    pcall(closeAllKoboldWindows)
 end
 
 -- KOReader's own "File browser" action (a gesture or the quick menu send

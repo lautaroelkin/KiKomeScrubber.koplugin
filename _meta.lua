@@ -7,7 +7,7 @@
 -- `name` stays "kobold" so it matches main.lua and any saved enable/disable
 -- choice. Change VERSION here when releasing.
 
-local _ = require("gettext")
+local _ = require("kobold.i18n")
 
 local KoboldMeta = {
     -- Read by KOReader.
@@ -17,7 +17,7 @@ local KoboldMeta = {
 
     -- Used by KiKome.
     NAME    = "KiKome",
-    VERSION = "2.0.0",
+    VERSION = "2.1.0",
     REPO    = "https://github.com/lautaroelkin/KiKomeScrubber.koplugin",
     LICENSE = "GPL-3.0",
     -- Developer tools, default state. When on: long-press the clock in the
