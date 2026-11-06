@@ -42,7 +42,7 @@ local TextWidget      = require("ui/widget/textwidget")
 local UIManager       = require("ui/uimanager")
 local VerticalGroup   = require("ui/widget/verticalgroup")
 local VerticalSpan    = require("ui/widget/verticalspan")
-local _               = require("gettext")
+local _               = require("kobold.i18n")
 local BookLang        = require("kobold.data.booklang")
 local CoverBadge      = require("kobold.ui.cover_badge")
 local KoboldCovers    = require("kobold.data.covers")
@@ -139,6 +139,10 @@ function Editor:init()
                 UIManager:setDirty(self, function() return "ui", r end)
             end
         end,
+        -- sliding over the space bar moves the caret
+        on_move = function(delta)
+            self.pos = Keyboard.moveCaret(self:fieldText(), self:caretPos(), delta)
+        end,
     }
     -- A new collection starts with the name field ready to type in, a search
     -- with the search field.
@@ -159,6 +163,11 @@ function Editor:init()
             TapEditor = { GestureRange:new{ ges = "tap", range = self.dimen } },
             SwipeEditor = { GestureRange:new{ ges = "swipe", range = self.dimen } },
             HoldEditor = { GestureRange:new{ ges = "hold", range = self.dimen } },
+            -- a slide over the keyboard's space bar moves the caret
+            PanEditor = { GestureRange:new{ ges = "pan", range = self.dimen } },
+            HoldPanEditor = { GestureRange:new{ ges = "hold_pan", range = self.dimen } },
+            PanReleaseEditor = { GestureRange:new{ ges = "pan_release", range = self.dimen } },
+            HoldReleaseEditor = { GestureRange:new{ ges = "hold_release", range = self.dimen } },
         }
         -- Hold the side bar and slide the finger: the bar and the page follow it.
         KoboldWidgets.registerBarDrag(self, {
@@ -210,24 +219,52 @@ function Editor:canFinish()
 end
 
 -- ── Typing ─────────────────────────────────────────────────────────────────
--- Adds a character to the field being typed in.
-function Editor:insert(c)
+-- The text of the field being typed in, and its caret: a byte offset in that
+-- text (nil: at the end, as when the field was just focused or emptied). A
+-- slide over the space bar moves it; typing and deleting happen where it is.
+function Editor:fieldText()
+    if self.focus == "name" then return self.coll_name end
+    return self.query or ""
+end
+
+function Editor:caretPos()
+    local n = #self:fieldText()
+    local p = self.pos
+    if p == nil or p > n then return n end
+    return math.max(0, p)
+end
+
+function Editor:setFieldText(text)
     if self.focus == "name" then
-        self.coll_name = self.coll_name .. c
+        self.coll_name = text
     elseif self.focus == "search" then
-        self.query = (self.query or "") .. c
+        self.query = (text ~= "") and text or nil
     end
 end
 
--- Removes the last character (a whole UTF-8 letter) of that field.
+-- The first byte of the UTF-8 letter that ends at byte `pos`.
+local function prevCharStart(text, pos)
+    local i = pos
+    while i > 1 and text:byte(i) >= 0x80 and text:byte(i) < 0xC0 do i = i - 1 end
+    return i
+end
+
+-- Adds a character to the field being typed in, at the caret.
+function Editor:insert(c)
+    if self.focus ~= "name" and self.focus ~= "search" then return end
+    local text, pos = self:fieldText(), self:caretPos()
+    self:setFieldText(text:sub(1, pos) .. c .. text:sub(pos + 1))
+    self.pos = pos + #c
+end
+
+-- Removes the letter (a whole UTF-8 letter) before the caret.
 function Editor:deleteLast()
-    local pat = "[%z\1-\127\194-\244][\128-\191]*$"
-    if self.focus == "name" then
-        self.coll_name = self.coll_name:gsub(pat, "")
-    elseif self.focus == "search" then
-        local q = (self.query or ""):gsub(pat, "")
-        self.query = (q ~= "") and q or nil
-    end
+    if self.focus ~= "name" and self.focus ~= "search" then return end
+    local text, pos = self:fieldText(), self:caretPos()
+    if pos == 0 then return end
+    local i = prevCharStart(text, pos)
+    self:setFieldText(text:sub(1, i - 1) .. text:sub(pos + 1))
+    self.pos = i - 1
 end
 
 function Editor:fieldIsEmpty()
@@ -242,11 +279,13 @@ function Editor:clearField()
     elseif self.focus == "search" then
         self.query = nil
     end
+    self.pos = nil
 end
 
 -- Focus moves to the name, the search, or nowhere (the keyboard goes down).
 function Editor:setFocus(f)
     self.focus = f
+    self.pos = nil   -- the caret starts at the end of the field
     self.kb:reset(f == "name" and self.coll_name == "")
     self:build()
     UIManager:setDirty(self, "ui")
@@ -272,14 +311,15 @@ function Editor:redraw(text_changed, kb_changed, rects)
     self:build()
     local W, H = Screen:getWidth(), Screen:getHeight()
     local n = U(2)
-    local regions = {}
+    -- the name field in the fast mode, the keys and the rest in "ui"
+    local fast, regions = {}, {}
     if text_changed then
         if self.focus == "search" then
             local top = math.max(0, self.search_rect.y - n)
             regions[#regions + 1] = Geom:new{ x = 0, y = top, w = W, h = self.list_end - top }
         elseif self.name_rect then
             local f = self.name_rect
-            regions[#regions + 1] = Geom:new{ x = f.x - n, y = f.y - n, w = f.w + 2 * n, h = f.h + 2 * n }
+            fast[#fast + 1] = Geom:new{ x = f.x - n, y = f.y - n, w = f.w + 2 * n, h = f.h + 2 * n }
             if self.shown_can ~= prev_can and self.create_rect then
                 local c = self.create_rect
                 regions[#regions + 1] = Geom:new{ x = c.x - n, y = c.y - n, w = c.w + 2 * n, h = c.h + 2 * n }
@@ -298,6 +338,9 @@ function Editor:redraw(text_changed, kb_changed, rects)
     end
     for _i, r in ipairs(regions) do
         UIManager:setDirty(self, function() return "ui", r end)
+    end
+    for _i, r in ipairs(fast) do
+        UIManager:setDirty(self, function() return Keyboard.REFRESH, r end)
     end
 end
 
@@ -342,10 +385,21 @@ function Editor:fieldBox(w, h, kind)
         row[#row + 1] = t
         text_w = t:getSize().w
     else
-        local t = TextWidget:new{ text = tail(text, face, avail), face = face }
-        row[#row + 1] = t
-        text_w = t:getSize().w
+        -- the text before the caret (its tail, if long), the caret, and what
+        -- is left after it up to the end of the field
+        local pos = focused and self:caretPos() or #text
+        local before, after = text:sub(1, pos), text:sub(pos + 1)
+        if before ~= "" then
+            local t = TextWidget:new{ text = tail(before, face, avail), face = face }
+            row[#row + 1] = t
+            text_w = t:getSize().w
+        end
         if focused then row[#row + 1] = caret() end
+        if after ~= "" and text_w < avail then
+            local a = TextWidget:new{ text = after, face = face, max_width = avail - text_w }
+            row[#row + 1] = a
+            text_w = text_w + a:getSize().w
+        end
     end
     used = used + text_w + caret_w
     if clear_w > 0 then
@@ -713,16 +767,67 @@ end
 -- Hold the keyboard's delete key: the field is cleared.
 function Editor:onHoldEditor(_ev, ges)
     if self.focus and self.kb_y and ges.pos.y >= self.kb_y then
-        local _handled, text_changed, kb_changed = self.kb:hold(ges.pos, self.kb_y)
+        local _handled, text_changed, kb_changed, rects = self.kb:hold(ges.pos, self.kb_y)
         if self.focus and (text_changed or kb_changed) then
-            self:redraw(text_changed, kb_changed)
+            self:redraw(text_changed, kb_changed, rects)
         end
     end
     return true
 end
 
+-- Sliding the finger over the keyboard's space bar moves the caret. While the
+-- finger is down the field is refreshed in the fast mode; when it lets go, once
+-- more in "ui".
+function Editor:fieldRegion()
+    local r = (self.focus == "name") and self.name_rect or self.search_rect
+    if not r then return nil end
+    local n = U(2)
+    return Geom:new{ x = r.x - n, y = r.y - n, w = r.w + 2 * n, h = r.h + 2 * n }
+end
+
+function Editor:onPanEditor(_ev, ges)
+    if not (self.focus and self.kb_y) then return false end
+    local handled, moved = self.kb:pan(ges, self.kb_y)
+    if moved then
+        self:build()
+        local region = self:fieldRegion()
+        if region then
+            UIManager:setDirty(self, function() return Keyboard.REFRESH, region end)
+        end
+    end
+    return handled
+end
+
+function Editor:onHoldPanEditor(ev, ges) return self:onPanEditor(ev, ges) end
+
+function Editor:onPanReleaseEditor()
+    local was = self.kb:panEnd()
+    if was and self.focus then
+        local region = self:fieldRegion()
+        if region then
+            UIManager:setDirty(self, function() return "ui", region end)
+        end
+    end
+    return was
+end
+
+function Editor:onHoldReleaseEditor() return self:onPanReleaseEditor() end
+
 -- Swipe up for the next page, down for the previous one, like Library.
 function Editor:onSwipeEditor(_ev, ges)
+    if self.kb:recentDrag() then return true end
+    -- A swipe that started on a key is a tap (see Keyboard:swipe): typing fast,
+    -- the touch driver sometimes reads a tap as a short swipe. A real swipe
+    -- over the keyboard still turns the page, as before.
+    if self.focus and self.kb_y and ges.pos.y >= self.kb_y then
+        local handled, text_changed, kb_changed, rects = self.kb:swipe(ges, self.kb_y)
+        if handled then
+            if self.focus and (text_changed or kb_changed) then
+                self:redraw(text_changed, kb_changed, rects)
+            end
+            return true
+        end
+    end
     if ges.pos.y < (self.y_list or 0) then return true end
     if ges.direction == "north" then
         self:goToPage(self.page + 1)

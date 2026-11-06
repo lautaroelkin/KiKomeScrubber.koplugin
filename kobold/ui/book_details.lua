@@ -34,7 +34,7 @@ local VerticalGroup   = require("ui/widget/verticalgroup")
 local VerticalSpan    = require("ui/widget/verticalspan")
 local Widget          = require("ui/widget/widget")
 local lfs             = require("libs/libkoreader-lfs")
-local _               = require("gettext")
+local _               = require("kobold.i18n")
 local Annotations     = require("kobold.data.annotations")
 local KoboldLibrary   = require("kobold.data.library")
 local KoboldMyBooksData = require("kobold.data.mybooks")
@@ -49,6 +49,8 @@ local Metadata        = require("kobold.data.metadata")
 local Toast           = require("kobold.ui.toast")
 local Keyboard        = require("kobold.ui.keyboard")
 local FileActions     = require("kobold.ui.file_actions")
+local KoboldTabs      = require("kobold.data.tabs")
+local Clipboard       = require("kobold.data.clipboard")
 local ListPicker      = require("kobold.ui.list_picker")
 local FDButtons       = require("kobold.data.file_dialog_buttons")
 local logger          = require("logger")
@@ -371,6 +373,19 @@ function KoboldBookDetails:buildDetails(level)
     -- the foot of the cover (never lower than it).
     local cover_w = math.floor(inner_w * M.cover)
     local cover_h = math.floor(cover_w * 1.5)
+    -- The cover is a share of the width, which on a wide (landscape) screen
+    -- makes it taller than the screen itself: the sheet then ran off the
+    -- bottom and was cut. It is kept to what is left of the height once the
+    -- bar, the facts, the tabs and a few lines of the body have their room
+    -- (the same sums as body_h below).
+    local seg_room = U(M.seg) + 2 * U(3)
+    local fixed_h = top_h + 4 * gap + U(M.tile) + seg_room
+    local min_body_h = math.max(U(110), math.floor(inner_h * 0.2))
+    local max_cover_h = inner_h - fixed_h - min_body_h
+    if cover_h > max_cover_h then
+        cover_h = math.max(U(120), max_cover_h)
+        cover_w = math.floor(cover_h / 1.5)
+    end
     local text_w  = inner_w - cover_w - gap_h
     -- The cover as it really is: it keeps its shape, so it can be smaller
     -- than its box.
@@ -645,8 +660,8 @@ end
 -- with a back button, then one bar with Favorites (the star on the left), the
 -- review (the middle) and the star rating (the five stars on the right);
 -- under it the reading status, a card of rows (Metadata, Collections, Book
--- settings) and, apart from it, a row of four buttons for the book's file:
--- Rename, Copy, Cut and Delete. Rating, status and Favorites save as they are tapped
+-- settings) and, apart from it, a row of buttons for the book's file:
+-- Rename, Copy, Cut, Select and Delete. Rating, status and Favorites save as they are tapped
 -- (see kobold/data/review.lua). The review bar opens the review screen
 -- (below), and the Metadata row opens the metadata screen; the other rows are
 -- still to come: they only say so for now.
@@ -708,11 +723,14 @@ local SETTINGS_ROWS = {
     { id = "refresh", icon = "refresh-cw",                text = _("Refresh metadata") },
 }
 
--- The book's file: its own row of buttons under the card of rows.
+-- The book's file: its own row of buttons under the card of rows. Select
+-- takes the book to the Library's Files tab in selection mode (or, with that
+-- tab off, to a full-screen Files of its own: see KoboldBookDetails:selectBook).
 local FILE_ACTIONS = {
     { id = "rename", icon = "square-arrow-right-enter", text = _("Rename") },
     { id = "copy",   icon = "copy",                     text = _("Copy") },
     { id = "cut",    icon = "scissors",                 text = _("Cut") },
+    { id = "select", icon = "square-dot",               text = _("Select") },
     { id = "delete", icon = "trash-2",                  text = _("Delete") },
 }
 
@@ -925,7 +943,7 @@ function KoboldBookDetails:buildEdit(level)
         list,
     }
 
-    -- The file's buttons, a card of their own: icon over name, four equal
+    -- The file's buttons, a card of their own: icon over name, equal
     -- cells with a hairline between them.
     local sep_w  = line_h
     local cell_w = math.floor((card_w - (#FILE_ACTIONS - 1) * sep_w) / #FILE_ACTIONS)
@@ -1673,6 +1691,12 @@ function KoboldBookDetails:openEditor(opts)
             end
             st.value, st.pos = "", 0
         end,
+        -- sliding over the space bar moves the caret (not in the number box,
+        -- and not for keywords, where typing always goes to the end)
+        on_move = function(delta)
+            if (st.num and st.focus == "number") or st.chips then return end
+            st.pos = Keyboard.moveCaret(st.value, st.pos, delta)
+        end,
         on_hide = function() self:setEditorKeyboard(false) end,
         is_empty = function() return st.focus ~= "number" and st.value == "" and not st.lower end,
         -- a tapped key lets go: its darker look is drawn away, only that key refreshed
@@ -1772,11 +1796,12 @@ function KoboldBookDetails:refreshEditorTyping(text_changed, kb_changed, rects, 
         return Geom:new{ x = r.x - n, y = r.y - n, w = r.w + 2 * n, h = r.h + 2 * n }
     end
     local n = U(2)
-    local regions = {}
+    -- the field and its counter in the fast mode, the keys and the rest in "ui"
+    local fast, regions = {}, {}
     if text_changed then
-        regions[#regions + 1] = grow(st.field_rect, n)
-        regions[#regions + 1] = grow(st.counter_rect, n)
-        if st.num_rect then regions[#regions + 1] = grow(st.num_rect, n) end
+        fast[#fast + 1] = grow(st.field_rect, n)
+        fast[#fast + 1] = grow(st.counter_rect, n)
+        if st.num_rect then fast[#fast + 1] = grow(st.num_rect, n) end
         if st.sug_region or st.had_sug then regions[#regions + 1] = grow(st.sug_region or st.had_sug, n) end
         if st.shown_can ~= prev_can then regions[#regions + 1] = grow(st.save_rect, n) end
     end
@@ -1789,6 +1814,9 @@ function KoboldBookDetails:refreshEditorTyping(text_changed, kb_changed, rects, 
     end
     for _i, r in ipairs(regions) do
         UIManager:setDirty(self, function() return "ui", r end)
+    end
+    for _i, r in ipairs(fast) do
+        UIManager:setDirty(self, function() return Keyboard.REFRESH, r end)
     end
 end
 
@@ -1905,12 +1933,31 @@ end
 function KoboldBookDetails:onEditorHold(pos)
     local st = self.editor
     if not (st and st.kb_open and st.kb_y and pos.y >= st.kb_y) then return end
-    local _handled, text_changed, kb_changed = self.kb:hold(pos, st.kb_y)
+    local _handled, text_changed, kb_changed, rects = self.kb:hold(pos, st.kb_y)
     if self.editor == st and st.kb_open and (text_changed or kb_changed) then
         local prev_can = st.shown_can
         self[1] = self:build()
-        self:refreshEditorTyping(text_changed, kb_changed, nil, prev_can)
+        self:refreshEditorTyping(text_changed, kb_changed, rects, prev_can)
     end
+end
+
+-- A swipe on the keyboard (in the text editor). The swipe that can close a
+-- quick slide on the space bar is eaten; any other one that started on a key
+-- is a tap (see Keyboard:swipe): typing fast, the touch driver sometimes reads
+-- a tap as a short swipe, and the letter would be lost. A real swipe is not
+-- handled here, so the zones under this one still get it.
+function KoboldBookDetails:onEditorSwipe(ges)
+    if not self.kb then return false end
+    if self.kb:recentDrag() then return true end
+    local st = self.editor
+    if not (self.view == "editor" and st and st.kb_open and st.kb_y) then return false end
+    local handled, text_changed, kb_changed, rects = self.kb:swipe(ges, st.kb_y)
+    if handled and self.editor == st and st.kb_open and (text_changed or kb_changed) then
+        local prev_can = st.shown_can
+        self[1] = self:build()
+        self:refreshEditorTyping(text_changed, kb_changed, rects, prev_can)
+    end
+    return handled
 end
 
 
@@ -4081,7 +4128,7 @@ function KoboldBookDetails:openFolderPicker(mode)
     }
 end
 
--- Rename, Copy, Cut, Delete: the book's file.
+-- Rename, Copy, Cut, Select, Delete: the book's file.
 function KoboldBookDetails:runFileAction(id)
     local file = self.file
     if id == "rename" then
@@ -4099,7 +4146,36 @@ function KoboldBookDetails:runFileAction(id)
             self.changed = true
             self:dismiss()
         end)
+    elseif id == "select" then
+        self:selectBook()
     end
+end
+
+-- Select: the Library's Files tab, in the folder of this book, in selection
+-- mode with the book already ticked (its Selection menu is then at hand). From
+-- Home the Library is opened first. When there is no Files tab (it can be
+-- turned off in Settings), or the clipboard still holds a pending copy / move
+-- (Files has no selection mode then), a full-screen Files of its own opens
+-- instead (file_selector.lua): the same folders, books, ticks and Selection
+-- menu, with the book already ticked. The page closes first either way: a
+-- moved or deleted book would leave it about a file that is gone.
+function KoboldBookDetails:selectBook()
+    local file = self.file
+    local screen, on_change = self.screen, self.on_change
+    local in_library = KoboldTabs.isEnabled("files") and not Clipboard.hasBoard()
+    self:dismiss()
+    UIManager:nextTick(function()
+        if not in_library then
+            require("kobold.ui.file_selector").show{ file = file, on_change = on_change }
+            return
+        end
+        local library = screen
+        if not (library and library.selectBookInFiles and not library.closed) then
+            -- Opened from Home (or from a screen that is not the Library).
+            library = require("kobold.ui.router").show("books", screen)
+        end
+        if library and library.selectBookInFiles then library:selectBookInFiles(file) end
+    end)
 end
 
 function KoboldBookDetails:onEditTap(pos)
@@ -4219,6 +4295,42 @@ function KoboldBookDetails:init()
             ges = "swipe",
             screen_zone = { ratio_x = 0, ratio_y = 0, ratio_w = 1, ratio_h = 1 },
             handler = function(ges) return self:onDetailsSwipe(ges) end,
+        },
+    })
+    -- Sliding the finger over the keyboard's space bar (in the text editor)
+    -- moves the caret. Registered after the swipe zone above, so its swipe
+    -- zone answers first and eats the swipe that can close a quick slide.
+    local full = { ratio_x = 0, ratio_y = 0, ratio_w = 1, ratio_h = 1 }
+    local function slide(ges)
+        local st = self.editor
+        if not (self.view == "editor" and self.kb and st and st.kb_open and st.kb_y) then return false end
+        local handled, moved = self.kb:pan(ges, st.kb_y)
+        if moved then
+            self[1] = self:build()
+            local rect = st.field_rect
+            -- while the finger is down: the fast mode
+            UIManager:setDirty(self, function() return Keyboard.REFRESH, rect end)
+        end
+        return handled
+    end
+    -- the finger lets go: the field is drawn properly again ("ui")
+    local function slideEnd()
+        local was = self.kb ~= nil and self.kb:panEnd()
+        local st = self.editor
+        if was and self.view == "editor" and st and st.kb_open and st.field_rect then
+            local rect = st.field_rect
+            UIManager:setDirty(self, function() return "ui", rect end)
+        end
+        return was
+    end
+    self:registerTouchZones({
+        { id = "KoboldKbPan", ges = "pan", screen_zone = full, handler = slide },
+        { id = "KoboldKbHoldPan", ges = "hold_pan", screen_zone = full, handler = slide },
+        { id = "KoboldKbPanRelease", ges = "pan_release", screen_zone = full, handler = slideEnd },
+        { id = "KoboldKbHoldRelease", ges = "hold_release", screen_zone = full, handler = slideEnd },
+        {
+            id = "KoboldKbSwipe", ges = "swipe", screen_zone = full,
+            handler = function(ges) return self:onEditorSwipe(ges) end,
         },
     })
 end

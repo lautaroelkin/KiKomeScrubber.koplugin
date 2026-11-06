@@ -2,7 +2,7 @@
 -- Opens a book from a Kobold screen.
 
 local UIManager       = require("ui/uimanager")
-local _               = require("gettext")
+local _               = require("kobold.i18n")
 local KoboldSession   = require("kobold.ui.session")
 local CoverBadge      = require("kobold.ui.cover_badge")
 

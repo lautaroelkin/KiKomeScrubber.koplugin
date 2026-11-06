@@ -47,6 +47,7 @@
 -- Icons are svg files in the plugin's icons folder (grid.svg, list.svg, ...).
 -- "grid", "list" and "adjust" also have drawn fallbacks if the file is missing.
 
+local _ = require("kobold.i18n")
 local Blitbuffer     = require("ffi/blitbuffer")
 local Device         = require("device")
 local Geom           = require("ui/geometry")
@@ -141,7 +142,7 @@ OptionSheet.iconWidget = iconWidget
 
 -- ── The sheet ──────────────────────────────────────────────────────────────
 local Sheet = InputContainer:extend{
-    title = "Options", rows = {},
+    title = _("Options"), rows = {},
     anchor = nil,   -- Geom of the window it sits at the bottom of (nil: the screen)
     corner = nil,   -- radius of the top corners
     bottom_corner = nil,  -- radius of the bottom corners when anchored to a window
@@ -442,7 +443,7 @@ function OptionSheet.show(opts)
         { options = opts.options or {}, selected = opts.selected, on_pick = opts.on_pick },
     }
     local sheet = Sheet:new{
-        title = opts.title or "Options", rows = rows,
+        title = opts.title or _("Options"), rows = rows,
         anchor = opts.anchor, corner = opts.radius, bottom_corner = opts.bottom_radius,
         on_close = opts.on_close,
     }

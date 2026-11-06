@@ -12,7 +12,7 @@ local RenamePrompt      = require("kobold.ui.rename_prompt")
 local Toast             = require("kobold.ui.toast")
 local Clipboard         = require("kobold.data.clipboard")
 local KoboldMyBooksData = require("kobold.data.mybooks")
-local _                 = require("gettext")
+local _                 = require("kobold.i18n")
 
 local Methods = {}
 local countText   -- "3 books"; given by mybooks.lua in install()

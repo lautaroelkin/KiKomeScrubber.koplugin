@@ -33,7 +33,7 @@ local HorizontalSpan  = require("ui/widget/horizontalspan")
 local TextWidget     = require("ui/widget/textwidget")
 local UIManager      = require("ui/uimanager")
 local Widget         = require("ui/widget/widget")
-local _              = require("gettext")
+local _              = require("kobold.i18n")
 local KoboldWidgets  = require("kobold.ui.widgets")
 
 local Screen = Device.screen

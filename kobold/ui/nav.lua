@@ -7,6 +7,7 @@
 -- that book. With Settings > Home > Rounded corners on, the cover and its
 -- backing have rounded corners.
 
+local _ = require("kobold.i18n")
 local Blitbuffer      = require("ffi/blitbuffer")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local Device          = require("device")
@@ -34,8 +35,8 @@ local KoboldNav = {}
 -- `icon` is one of Kobold's own icons; `fallback` is the KOReader icon used
 -- when that file is missing.
 local TABS = {
-    { id = "home",  text = "Home",    icon = "home",     fallback = "home",    event = "NavHome" },
-    { id = "books", text = "Library", icon = "my-books", fallback = "library", event = "NavBooks" },
+    { id = "home",  text = _("Home"),    icon = "home",     fallback = "home",    event = "NavHome" },
+    { id = "books", text = _("Library"), icon = "my-books", fallback = "library", event = "NavBooks" },
 }
 
 function KoboldNav.height()

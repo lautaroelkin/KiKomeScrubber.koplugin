@@ -28,7 +28,7 @@
 --   }
 -- Pages: "root" (the main screen), "general" (opening panel, corners, outline,
 -- shelves and the status bar), "advanced" and one choice page per setting
--- (battery, library_list_rows, library_grid_rows), "library", "library_tabs"
+-- (battery, clock_layout, clock_date_format, clock_pattern, library_list_rows, library_grid_rows), "library", "library_tabs"
 -- (the Library's tabs: order and on / off) and "library_tab:collections".
 -- Everything stays inside this window; no KOReader menus.
 
@@ -52,8 +52,9 @@ local TextWidget      = require("ui/widget/textwidget")
 local UIManager       = require("ui/uimanager")
 local VerticalGroup   = require("ui/widget/verticalgroup")
 local VerticalSpan    = require("ui/widget/verticalspan")
-local _               = require("gettext")
+local _               = require("kobold.i18n")
 local KoboldChips     = require("kobold.data.chips")
+local KoboldClock     = require("kobold.data.clock")
 local KoboldCovers    = require("kobold.data.covers")
 local KoboldLibrary   = require("kobold.data.library")
 local KoboldMeta      = require("kobold.meta")
@@ -201,6 +202,74 @@ local function radioPage(title, options, current, set)
     return { title = title, items = items }
 end
 
+-- The codes of the custom clock pattern, in the order the page lists them:
+-- the code, what it is, and a sample from now on the page itself. (Hold-only
+-- descriptions were too hidden: nobody knew what %K or %a were.)
+local function patternCodes()
+    return {
+        { "%K", _("Time") },
+        { "%a", _("Weekday, short") },
+        { "%A", _("Weekday") },
+        { "%e", _("Day") },
+        { "%d", _("Day, two digits") },
+        { "%b", _("Month, short") },
+        { "%B", _("Month") },
+        { "%m", _("Month, number") },
+        { "%Y", _("Year") },
+        { "%n", _("New line (two lines at most)") },
+    }
+end
+
+-- Writes the custom clock pattern, in the plugin's own text prompt.
+function KoboldSettings:editClockPattern()
+    require("kobold.ui.rename_prompt").show{
+        title = _("Custom pattern"),
+        text = KoboldClock.customPattern(),
+        placeholder = KoboldClock.DEFAULT_PATTERN,
+        validate = function(pattern)
+            if KoboldClock.expand(pattern):match("^%s*$") then
+                return _("The pattern shows nothing.")
+            end
+        end,
+        on_save = function(pattern)
+            KoboldPrefs.set("clock_pattern", pattern)
+            KoboldPrefs.set("clock_layout", "custom")
+            broadcastChange()
+            -- What it comes out as, so a wrong code shows at once.
+            Toast.show(KoboldClock.preview("custom"))
+            self:refresh()
+        end,
+    }
+end
+
+-- The clock rows of Settings > General > Status bar: as few as possible. The
+-- layout is always there; the date format only while the layout shows a date;
+-- the custom pattern only while the custom layout is chosen.
+function KoboldSettings:clockItems()
+    local items = {
+        {
+            text = _("Clock"), icon = "clock.svg", kind = "submenu", target = "clock_layout",
+            value = KoboldClock.preview(),
+            desc = _("What the status bar shows where the time is: the time alone, or with the weekday and the date. Tap the clock in the status bar to see the full date. The 12 / 24-hour format is KOReader's."),
+        },
+    }
+    if KoboldClock.hasDate() then
+        items[#items + 1] = {
+            text = _("Date format"), icon = "notepad-text.svg", kind = "submenu", target = "clock_date_format",
+            value = KoboldClock.formatWords(KoboldClock.formatId()),
+            desc = _("Day first or month first, with the year or without it."),
+        }
+    end
+    if KoboldClock.layout() == "custom" then
+        items[#items + 1] = {
+            text = _("Custom pattern"), icon = "pencil.svg", kind = "submenu", target = "clock_pattern",
+            value = KoboldClock.customPattern(),
+            desc = _("Write what the clock shows, or go back to the default pattern."),
+        }
+    end
+    return items
+end
+
 -- Pages are built fresh on every redraw, so values are always current.
 function KoboldSettings:getPageDefinition(page_id)
     local done = function() self:refresh() end
@@ -242,7 +311,7 @@ function KoboldSettings:getPageDefinition(page_id)
 
     -- General: what used to be the General section, and the Status bar.
     if page_id == "general" then
-        return {
+        local page = {
             title = _("General"),
             items = {
                 {
@@ -273,6 +342,9 @@ function KoboldSettings:getPageDefinition(page_id)
                 },
             },
         }
+        -- The clock rows come last: the Status bar section is the end of the page.
+        for _i, item in ipairs(self:clockItems()) do page.items[#page.items + 1] = item end
+        return page
     end
 
     -- Library (My Books): how it lays out its books.
@@ -556,7 +628,64 @@ function KoboldSettings:getPageDefinition(page_id)
     end
 
     -- Choice pages: same window, same style, a check on the current option.
-    if page_id == "battery" then
+    if page_id == "clock_layout" then
+        -- Each option is drawn as it would look now, so there is nothing to
+        -- translate; the custom one has no preview of its own (see its row).
+        local options = {}
+        for _i, id in ipairs(KoboldClock.LAYOUTS) do
+            options[#options + 1] = {
+                id = id,
+                label = (id == "custom") and _("Custom pattern") or KoboldClock.preview(id),
+            }
+        end
+        return radioPage(_("Clock"), options, KoboldClock.layout(), function(id)
+            KoboldPrefs.set("clock_layout", id)
+            broadcastChange()
+            -- Choosing the custom pattern opens its page, with the codes listed.
+            if id == "custom" then UIManager:nextTick(function() self:pushView("clock_pattern") end) end
+        end)
+    elseif page_id == "clock_date_format" then
+        local options = {}
+        for _i, id in ipairs(KoboldClock.FORMATS) do
+            options[#options + 1] = { id = id, label = KoboldClock.formatPreview(id) }
+        end
+        return radioPage(_("Date format"), options, KoboldClock.formatId(), function(id)
+            local order, year = KoboldClock.formatParts(id)
+            KoboldPrefs.set("clock_date_order", order)
+            KoboldPrefs.set("clock_year", year)
+            broadcastChange()
+        end)
+    elseif page_id == "clock_pattern" then
+        local pattern = KoboldClock.customPattern()
+        local items = {
+            {
+                text = _("Edit pattern"), icon = "pencil.svg", kind = "action",
+                value = pattern,
+                desc = _("Write the pattern with the codes below. Any other text stays as written."),
+                callback = function() self:editClockPattern() end,
+            },
+            {
+                text = _("Reset to default"), icon = "undo.svg", kind = "action",
+                disabled = (pattern == KoboldClock.DEFAULT_PATTERN),
+                desc = string.format(_("Goes back to the default pattern: %s"), KoboldClock.DEFAULT_PATTERN),
+                callback = function()
+                    KoboldPrefs.set("clock_pattern", nil)
+                    broadcastChange()
+                    Toast.show(KoboldClock.preview("custom"))
+                    done()
+                end,
+            },
+            { section = _("Codes: other text stays as written") },
+        }
+        for _i, code in ipairs(patternCodes()) do
+            -- No callback: a row to read. The value is what the code gives now.
+            items[#items + 1] = {
+                text = code[1] .. "   " .. code[2], kind = "action",
+                value = (code[1] ~= "%n") and KoboldClock.expand(code[1]) or nil,
+            }
+        end
+        return { title = _("Custom pattern"), items = items }
+    elseif page_id == "battery" then
         return radioPage(_("Battery"), {
             { id = "fill", label = BATTERY_LABELS.fill },
             { id = "percent", label = BATTERY_LABELS.percent },

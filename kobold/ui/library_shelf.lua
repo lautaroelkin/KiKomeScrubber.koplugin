@@ -18,6 +18,7 @@
 -- come from custom metadata first, then the cover browser's book info: the
 -- same order of priority Bookshelf uses.
 
+local _ = require("kobold.i18n")
 local Blitbuffer      = require("ffi/blitbuffer")
 local ffi             = require("ffi")
 local Device          = require("device")
@@ -116,7 +117,7 @@ local iconWidget = OptionSheet.iconWidget
 -- Cached for the session, but only once the cover browser has actually
 -- answered: a book it has not indexed yet is asked again next time.
 local META = {}
-local UNKNOWN_AUTHOR = "Unknown author"
+local UNKNOWN_AUTHOR = _("Unknown author")
 
 local function trim(s)
     return (s:gsub("%s+", " "):match("^%s*(.-)%s*$"))
@@ -1073,7 +1074,7 @@ function LibraryShelf:buildHeader()
     local back = HorizontalGroup:new{
         iconWidget("chevron-left", U(18), BLACK),
         HorizontalSpan:new{ width = U(6) },
-        TextWidget:new{ text = "Back", face = KoboldWidgets.face(17) },
+        TextWidget:new{ text = _("Back"), face = KoboldWidgets.face(17) },
     }
     self.back_w = back:getSize().w + Screen:scaleBySize(28)
     local name_w = math.max(self.width - self.back_w - Screen:scaleBySize(20), 50)
@@ -1583,7 +1584,7 @@ function LibraryShelf:buildList(entries, avail)
                     FrameContainer:new{
                         bordersize = 0, margin = 0, radius = U(7), background = C_TAG,
                         padding_left = U(12), padding_right = U(12), padding_top = U(3), padding_bottom = U(3),
-                        TextWidget:new{ text = "On hold", face = KoboldWidgets.face(13), fgcolor = BLACK },
+                        TextWidget:new{ text = _("On hold"), face = KoboldWidgets.face(13), fgcolor = BLACK },
                     },
                 }
                 if pct and pct > 0 then
@@ -1596,10 +1597,10 @@ function LibraryShelf:buildList(entries, avail)
                 texts[#texts + 1] = FrameContainer:new{
                     bordersize = 0, margin = 0, radius = U(7), background = C_TAG,
                     padding_left = U(12), padding_right = U(12), padding_top = U(3), padding_bottom = U(3),
-                    TextWidget:new{ text = "Read", face = KoboldWidgets.face(13), fgcolor = BLACK },
+                    TextWidget:new{ text = _("Read"), face = KoboldWidgets.face(13), fgcolor = BLACK },
                 }
             elseif pct then
-                local label = grey(math.floor(pct * 100 + 0.5) .. "% Read", 13)
+                local label = grey(string.format(_("%d%% Read"), math.floor(pct * 100 + 0.5)), 13)
                 local space = U(14)
                 local bar_w = math.min(U(110), text_w - label:getSize().w - space)
                 texts[#texts + 1] = VerticalSpan:new{ width = gap }
@@ -1679,25 +1680,25 @@ function LibraryShelf:rebuild()
     local body
     if empty then
         self.page_items, self.page_kinds, self.item_rects, self.total_pages = {}, {}, {}, 1
-        local msg = "Nothing here yet"
+        local msg = _("Nothing here yet")
         if self.tab == "folders" then
-            msg = "No books in this folder."
+            msg = _("No books in this folder.")
         elseif self.tab == "series" then
-            msg = "No series found in your books. Your collections are under Collections."
+            msg = _("No series found in your books. Your collections are under Collections.")
         elseif self.tab == "authors" then
-            msg = "No authors found yet. Open a book once so its info gets read."
+            msg = _("No authors found yet. Open a book once so its info gets read.")
         elseif self.tab == "collections" then
-            msg = "No collections yet. Make one from a book's menu in the file browser."
+            msg = _("No collections yet. Make one from a book's menu in the file browser.")
         elseif self.tab == "genres" then
-            msg = "No genres found. They come from the keywords of your books."
+            msg = _("No genres found. They come from the keywords of your books.")
         elseif self.tab == "favorites" then
-            msg = "No books in Favorites yet. Add one from a book's menu in the file browser."
+            msg = _("No books in Favorites yet. Add one from a book's menu in the file browser.")
         elseif self.tab == "tbr" then
-            msg = "No books in To be read yet. Add one from a book's menu in the file browser."
+            msg = _("No books in To be read yet. Add one from a book's menu in the file browser.")
         elseif customPath(self.tab) then
-            msg = "No books in this folder."
+            msg = _("No books in this folder.")
         elseif customCollection(self.tab) then
-            msg = "No books in this collection yet. Add one from a book's menu in the file browser."
+            msg = _("No books in this collection yet. Add one from a book's menu in the file browser.")
         end
         body = VerticalGroup:new{
             align = "left",
@@ -1733,7 +1734,7 @@ end
 -- The more button of Home: Refresh library and Settings (the same two rows as
 -- the More menu of Library's Books tab). `anchor` is the button's rectangle.
 function LibraryShelf:openMoreMenu(anchor)
-    local _ = require("gettext")
+    local _ = require("kobold.i18n")
     local items = {
         { text = _("Refresh library"), icon = { "refresh-cw", "undo" },
           action = function() self:refreshLibrary() end },
@@ -1752,7 +1753,7 @@ end
 function LibraryShelf:refreshLibrary()
     local home = self.home
     if not home then return end
-    local _ = require("gettext")
+    local _ = require("kobold.i18n")
     local Toast = require("kobold.ui.toast")
     local working = Toast.working(_("Refreshing…"))
     KoboldLibrary.forgetAll()
@@ -1829,7 +1830,7 @@ function LibraryShelf:holdCard(item, anchor)
         local title = key
         local ok, RC = pcall(require, "readcollection")
         if ok and RC and key == (RC.default_collection_name or "favorites") then
-            title = require("gettext")("Favorites")
+            title = require("kobold.i18n")("Favorites")
         end
         host:showCollectionOptions({ key = key, name = title }, anchor, align)
     end

@@ -23,6 +23,7 @@ local OverlapGroup    = require("ui/widget/overlapgroup")
 local KoboldMeta      = require("kobold.meta")
 local KoboldCovers    = require("kobold.data.covers")
 local KoboldPrefs     = require("kobold.data.prefs")
+local KoboldClock     = require("kobold.data.clock")
 local KoboldBattery   = require("kobold.ui.battery")
 local KoboldTaps      = require("kobold.ui.taps")
 local KoboldMetrics   = require("kobold.ui.metrics")
@@ -685,36 +686,70 @@ local STATUS_ICON = 26  -- status bar icon size, before screen scaling
 local STATUS_GAP  = 18
 
 -- Widths of the status bar icons, left to right: contrast, Wi-Fi, battery,
--- search. The battery SVG only fills the middle of
--- its square, so it is drawn larger than the others (more so with the
--- percentage inside, to keep the number readable).
+-- search. The battery SVG only fills the middle of its square, so it is drawn
+-- larger than the others. In percentage mode its slot is wider by the number
+-- written to its right (the icon itself keeps its size). The fifth value is
+-- the battery icon alone.
 local function statusIconWidths()
     local size = Screen:scaleBySize(STATUS_ICON)
     local style = KoboldPrefs.get("battery")
     -- Kobold's own battery fills more of its square than KOReader's old one, so
     -- it is drawn a little smaller for the same look.
     local own = KoboldWidgets.koboldIcons()
-    local battery = math.floor(size * (style == "percent" and (own and 1.55 or 1.7) or (own and 1.15 or 1.3)))
-    return { size, size, battery, size }, size, Screen:scaleBySize(STATUS_GAP), style
+    local battery_icon = math.floor(size * (own and 1.15 or 1.3))
+    local battery = battery_icon + (style == "percent" and KoboldBattery.labelWidth() or 0)
+    return { size, size, battery, size }, size, Screen:scaleBySize(STATUS_GAP), style, battery_icon
 end
 
--- Shared top status bar: time on the left, then contrast, Wi-Fi, battery and
--- search icons on the right.
+-- Width the clock may take: the bar up to the icons, with one gap left before
+-- them. The text is cut there (with "...") and never reaches the icons.
+local function clockMaxWidth(content_w)
+    local widths, _size, gap = statusIconWidths()
+    local total = (#widths - 1) * gap
+    for _i, w in ipairs(widths) do total = total + w end
+    return math.max(0, content_w - total - gap)
+end
+
+-- The clock of the status bar, at most `max_w` wide: one line in the usual
+-- size, or two smaller lines (as small as it takes to fit the bar's height).
+local function clockWidget(max_w)
+    local lines = KoboldClock.lines()
+    if #lines == 1 then
+        return TextWidget:new{ text = lines[1], face = KoboldWidgets.face(16), max_width = max_w }
+    end
+    local bar_h = KoboldMetrics.statusBar().h
+    local size, group = 13, nil
+    while true do
+        group = VerticalGroup:new{
+            align = "left",
+            TextWidget:new{ text = lines[1], face = KoboldWidgets.face(size), max_width = max_w },
+            TextWidget:new{ text = lines[2], face = KoboldWidgets.face(size), max_width = max_w },
+        }
+        if group:getSize().h <= bar_h or size <= 8 then break end
+        group:free()
+        size = size - 1
+    end
+    return group
+end
+
+-- Shared top status bar: the clock on the left (time, or time and date, as
+-- chosen in Settings), then contrast, Wi-Fi, battery and search icons on the
+-- right.
 function KoboldWidgets.statusBar(content_w)
-    local time_text = TextWidget:new{ text = KoboldWidgets.clockText(), face = KoboldWidgets.face(16) }
-    local widths, size, gap, style = statusIconWidths()
+    local widths, size, gap, style, battery_icon = statusIconWidths()
     local icons = HorizontalGroup:new{
         KoboldWidgets.customIcon("brightness", size, "appbar.contrast"),
         HorizontalSpan:new{ width = gap },
         KoboldWidgets.customIcon(KoboldWidgets.wifiIconName(), size, "wifi.open.100"),
         HorizontalSpan:new{ width = gap },
-        KoboldBattery:new{ size = widths[3], slot_h = size, style = style },
+        KoboldBattery:new{ size = battery_icon, slot_h = size, style = style },
         HorizontalSpan:new{ width = gap },
         KoboldWidgets.customIcon("search", size, KoboldWidgets.hasIcon("lookup.search") and "lookup.search" or "appbar.search"),
     }
-    local spacer = content_w - time_text:getSize().w - icons:getSize().w
+    local clock = clockWidget(clockMaxWidth(content_w))
+    local spacer = content_w - clock:getSize().w - icons:getSize().w
     return HorizontalGroup:new{
-        time_text,
+        clock,
         HorizontalSpan:new{ width = math.max(spacer, 0) },
         icons,
     }
@@ -731,25 +766,45 @@ local function statusIconX(margin, content_w, index)
     return x, widths[index], gap
 end
 
+-- True when the clock shows 24-hour time: KOReader's own clock setting.
+function KoboldWidgets.clock24()
+    return KoboldClock.clock24()
+end
+
+-- What the clock of the status bar shows now (two lines are joined by a line
+-- break). See data/clock.lua.
+function KoboldWidgets.clockText()
+    return table.concat(KoboldClock.lines(), "\n")
+end
+
+-- The clock's tap zone (popup with the time and the full date) and its
+-- long-press zone (debug screenshot): the left third of the bar, or all of the
+-- clock when its text is wider than that, and never over the icons. The text
+-- changes with the layout chosen in Settings, so refreshStatusBar calls this
+-- again each time the bar is drawn.
+local function registerClockZones(screen, margin, top, content_w, status_h)
+    local clock_max = clockMaxWidth(content_w)
+    local clock = clockWidget(clock_max)
+    local clock_w = clock:getSize().w
+    clock:free()
+    require("kobold.ui.popup").setAnchor("clock", margin + math.floor(clock_w / 2))
+    local zone_w = math.min(math.max(math.floor(content_w / 3), clock_w), clock_max)
+    KoboldTaps.add(screen, "KoboldClockTap", margin, top, zone_w, status_h,
+        function() require("kobold.ui.clock_popup").show() end)
+    -- Debug mode: long-press the clock to screenshot. Always registered and
+    -- checked when pressed, so toggling debug mode on the About page works on
+    -- screens that are already open.
+    KoboldTaps.hold(screen, "KoboldDebugShot", margin, top, zone_w, status_h,
+        function()
+            if KoboldMeta.debugOn() then KoboldWidgets.debugScreenshot() end
+        end)
+end
+
 -- The status bar in a fixed-size frame, for the top of a Kobold screen whose
 -- body starts at (margin, margin). Also registers the tap zones over the
 -- contrast icon (brightness popup), the Wi-Fi icon (Wi-Fi popup) and the
 -- search icon (KOReader's file search). The frame is remembered on `screen`
 -- so refreshStatusBar can redraw just the bar.
--- True when the clock shows 24-hour time: Kobold's own choice (clock
--- popup), or KOReader's clock setting when none was made.
-function KoboldWidgets.clock24()
-    local own = KoboldPrefs.get("clock_24h")
-    if own ~= nil then return own == true end
-    return not (G_reader_settings and G_reader_settings:isTrue("twelve_hour_clock"))
-end
-
--- Current time for the status bar: "22:42" or "10:42 PM".
-function KoboldWidgets.clockText()
-    if KoboldWidgets.clock24() then return os.date("%H:%M") end
-    return (os.date("%I:%M %p"):gsub("^0", ""))
-end
-
 -- `top` (optional) is the y of the bar's top edge; it defaults to `margin`.
 function KoboldWidgets.statusBarFrame(screen, margin, content_w, status_h, top)
     top = top or margin
@@ -775,18 +830,7 @@ function KoboldWidgets.statusBarFrame(screen, margin, content_w, status_h, top)
         KoboldTaps.add(screen, "KoboldStatusIcon" .. i, math.floor(x - icon_gap / 2), top,
             icon_w + icon_gap, status_h, action)
     end
-    require("kobold.ui.popup").setAnchor("clock", margin + math.floor(
-        TextWidget:new{ text = KoboldWidgets.clockText(), face = KoboldWidgets.face(16) }:getSize().w / 2))
-    -- The clock (left third of the bar): tap for the 12/24-hour popup.
-    KoboldTaps.add(screen, "KoboldClockTap", margin, top, math.floor(content_w / 3), status_h,
-        function() require("kobold.ui.clock_popup").show() end)
-    -- Debug mode: long-press the clock (left third of the bar) to screenshot.
-    -- Always registered and checked when pressed, so toggling debug mode on
-    -- the About page works on screens that are already open.
-    KoboldTaps.hold(screen, "KoboldDebugShot", margin, top, math.floor(content_w / 3), status_h,
-        function()
-            if KoboldMeta.debugOn() then KoboldWidgets.debugScreenshot() end
-        end)
+    registerClockZones(screen, margin, top, content_w, status_h)
     return frame
 end
 
@@ -805,6 +849,8 @@ function KoboldWidgets.refreshStatusBar(screen)
     local s = screen._kobold_status
     if not s then return end
     s.frame[1] = KoboldWidgets.statusBar(s.dimen.w)
+    -- The clock may have changed width (layout, date): its tap zone follows.
+    registerClockZones(screen, s.dimen.x, s.dimen.y, s.dimen.w, s.dimen.h)
     UIManager:setDirty(screen, function() return "ui", s.dimen end)
 end
 
@@ -857,7 +903,7 @@ end
 -- collection editor in search mode: a search field, the library's books, tap
 -- one to open it). KOReader's own file search stays as the fallback.
 function KoboldWidgets.showFileSearch()
-    local gettext = require("gettext")
+    local gettext = require("kobold.i18n")
     local ok_own = pcall(function()
         require("kobold.ui.collection_editor").show{
             mode = "search",
@@ -872,7 +918,7 @@ function KoboldWidgets.showFileSearch()
     local shown = searcher and searcher.onShowFileSearch
         and pcall(searcher.onShowFileSearch, searcher)
     if not shown then
-        require("kobold.ui.toast").error(require("gettext")("File search is not available."))
+        require("kobold.ui.toast").error(require("kobold.i18n")("File search is not available."))
     end
 end
 

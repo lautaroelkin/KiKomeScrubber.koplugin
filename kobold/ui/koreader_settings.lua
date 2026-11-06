@@ -3,7 +3,7 @@
 
 local Menu            = require("ui/widget/menu")
 local UIManager       = require("ui/uimanager")
-local _               = require("gettext")
+local _               = require("kobold.i18n")
 local KoboldSettings  = require("kobold.data.settings")
 
 local KoboldKOReaderSettings = {}

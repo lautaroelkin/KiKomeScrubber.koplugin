@@ -1,24 +1,20 @@
 -- kobold/ui/clock_popup.lua — Kobold
 -- Clock popup, opened by tapping the time in the status bar. Left-aligned
--- under the bar, in the same rounded box style as the other popups, with a switch
--- for 24-hour time. Until it is used, the clock follows KOReader's setting.
+-- under the bar, in the same rounded box style as the other popups. It only
+-- shows: the time (as KOReader is set to show it), the weekday and the full
+-- date with the year. What the bar itself shows, and in which layout, is
+-- chosen in Settings > General > Status bar. A tap anywhere closes it.
 
 local Blitbuffer      = require("ffi/blitbuffer")
-local CenterContainer = require("ui/widget/container/centercontainer")
 local Device          = require("device")
-local Event           = require("ui/event")
 local FrameContainer  = require("ui/widget/container/framecontainer")
 local Geom            = require("ui/geometry")
 local GestureRange    = require("ui/gesturerange")
-local HorizontalGroup = require("ui/widget/horizontalgroup")
-local HorizontalSpan  = require("ui/widget/horizontalspan")
 local InputContainer  = require("ui/widget/container/inputcontainer")
 local TextWidget      = require("ui/widget/textwidget")
-local UIManager       = require("ui/uimanager")
 local VerticalGroup   = require("ui/widget/verticalgroup")
 local VerticalSpan    = require("ui/widget/verticalspan")
-local _               = require("gettext")
-local KoboldPrefs     = require("kobold.data.prefs")
+local KoboldClock     = require("kobold.data.clock")
 local KoboldPopup     = require("kobold.ui.popup")
 local KoboldWidgets   = require("kobold.ui.widgets")
 
@@ -31,19 +27,18 @@ local KoboldClockPopup = InputContainer:extend{
 
 function KoboldClockPopup:build()
     local pad, border = Screen:scaleBySize(18), Screen:scaleBySize(2)
-    local row_h = Screen:scaleBySize(40)
     local gap = Screen:scaleBySize(6)
     local fw = KoboldPopup.width()
     local inner = fw - 2 * (pad + border)
     local fx, fy = KoboldPopup.originLeft()
 
-    local on = KoboldWidgets.clock24()
-    local time = TextWidget:new{ text = KoboldWidgets.clockText(), face = KoboldWidgets.face(30), bold = true }
+    local time_text, weekday, date = KoboldClock.popupLines()
     local content = VerticalGroup:new{
         align = "left",
-        time,
+        TextWidget:new{ text = time_text, face = KoboldWidgets.face(30), bold = true, max_width = inner },
         VerticalSpan:new{ width = gap },
-        KoboldWidgets.switchRow(inner, row_h, _("24-hour clock"), on),
+        TextWidget:new{ text = weekday, face = KoboldWidgets.face(20), max_width = inner },
+        TextWidget:new{ text = date, face = KoboldWidgets.face(20), max_width = inner },
     }
     local box = FrameContainer:new{
         bordersize = border, padding = pad,
@@ -53,10 +48,6 @@ function KoboldClockPopup:build()
     }
     local fh = box:getSize().h
     self.frame_dimen = Geom:new{ x = fx, y = fy, w = fw, h = fh }
-    self.switch_rect = Geom:new{
-        x = fx + border + pad, y = fy + border + pad + time:getSize().h + gap,
-        w = inner, h = row_h,
-    }
     return KoboldPopup.place(self.dimen, fx, fy, box, KoboldPopup.anchor("clock"))
 end
 
@@ -74,16 +65,9 @@ function KoboldClockPopup:init()
     end
 end
 
-function KoboldClockPopup:onTapClock(_, ges)
-    if not ges.pos:intersectWith(self.frame_dimen) then return self:onClose() end
-    if ges.pos:intersectWith(self.switch_rect) then
-        KoboldPrefs.set("clock_24h", not KoboldWidgets.clock24())
-        -- Open Kobold screens redraw their status bar with the new format.
-        UIManager:broadcastEvent(Event:new("KoboldSettingsChanged"))
-        self[1] = self:build()
-        UIManager:setDirty(self, function() return "ui", self.frame_dimen end)
-    end
-    return true
+-- Nothing in the box to press: any tap, inside or outside, closes it.
+function KoboldClockPopup:onTapClock()
+    return self:onClose()
 end
 
 function KoboldClockPopup:onClose()

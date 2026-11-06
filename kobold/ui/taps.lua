@@ -2,7 +2,7 @@
 -- Registers named tap zones on a widget.
 
 local Device          = require("device")
-local _               = require("gettext")
+local _               = require("kobold.i18n")
 
 local Screen = Device.screen
 

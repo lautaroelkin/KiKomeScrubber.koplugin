@@ -11,7 +11,7 @@ local Menu         = require("ui/widget/menu")
 local SpinWidget   = require("ui/widget/spinwidget")
 local Toast        = require("kobold.ui.toast")
 local UIManager    = require("ui/uimanager")
-local _            = require("gettext")
+local _            = require("kobold.i18n")
 local KoboldActions = require("kobold.ui.actions")
 
 local Screen = Device.screen

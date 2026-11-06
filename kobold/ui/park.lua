@@ -311,7 +311,7 @@ function Park.closeScreen(screen)
         return
     end
     local Transition = require("kobold.ui.transition")
-    pcall(function() Transition.show(require("gettext")("Closing")) end)
+    pcall(function() Transition.show(require("kobold.i18n")("Closing")) end)
     UIManager:nextTick(function()
         finishCore("screen closed")
         Transition.close()

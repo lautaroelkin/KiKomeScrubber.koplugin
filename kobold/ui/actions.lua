@@ -5,7 +5,7 @@
 
 local Event           = require("ui/event")
 local UIManager       = require("ui/uimanager")
-local _               = require("gettext")
+local _               = require("kobold.i18n")
 
 local KoboldActions = {}
 

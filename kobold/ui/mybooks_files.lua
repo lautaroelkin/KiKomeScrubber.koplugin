@@ -15,7 +15,7 @@ local Clipboard    = require("kobold.data.clipboard")
 local FileOps      = require("kobold.data.fileops")
 local KoboldMyBooksData = require("kobold.data.mybooks")
 local lfs          = require("libs/libkoreader-lfs")
-local _            = require("gettext")
+local _            = require("kobold.i18n")
 
 local Methods = {}
 local countText   -- "3 books"; given by mybooks.lua in install()
@@ -60,6 +60,35 @@ function Methods:showSelectionMenu(rect)
             action = function() self:confirmDelete() end }
     end
     require("kobold.ui.book_menu").show{ screen = self, anchor = rect, align = "right", items = items }
+end
+
+-- Select (from Edit in the book details): shows the Files tab in the folder
+-- the book is in, on the page where it is, in selection mode with the book
+-- ticked. The Selection menu (the actions button of the bar) is then at hand.
+-- Returns false when it could not (a pending copy / move holds the clipboard).
+function Methods:selectBookInFiles(file)
+    if Clipboard.hasBoard() then return false end
+    local dir = file:match("^(.*)/[^/]+$")
+    if not dir or dir == "" then dir = "/" end
+    Clipboard.exitSelect()
+    self.tab = "files"
+    self.group = nil
+    self.folder = dir
+    self.folder_pages = nil
+    self.page = 1
+    self:applyList()
+    local per_page = self:perPage()
+    for i, it in ipairs(self.list) do
+        if it.file == file then
+            self.page = math.ceil(i / per_page)
+            break
+        end
+    end
+    Clipboard.enterSelect()
+    Clipboard.add(file)
+    self:applyList()
+    self:refresh()
+    return true
 end
 
 -- Why books were left out of a paste, one short line (shared: file_actions.lua).

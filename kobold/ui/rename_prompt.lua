@@ -33,7 +33,7 @@ local TextWidget      = require("ui/widget/textwidget")
 local UIManager       = require("ui/uimanager")
 local VerticalGroup   = require("ui/widget/verticalgroup")
 local VerticalSpan    = require("ui/widget/verticalspan")
-local _               = require("gettext")
+local _               = require("kobold.i18n")
 local Keyboard        = require("kobold.ui.keyboard")
 local KoboldWidgets   = require("kobold.ui.widgets")
 
@@ -136,6 +136,8 @@ function Prompt:init()
             end
         end,
         on_clear = function() self.value, self.pos, self.scroll = "", 0, 0 end,
+        -- sliding over the space bar moves the caret
+        on_move = function(delta) self.pos = Keyboard.moveCaret(self.value, self.pos, delta) end,
         on_hide = function() self:setKeyboard(false) end,
         is_empty = function() return self.value == "" end,
         -- a tapped key lets go: its darker look is drawn away, and only that
@@ -156,6 +158,12 @@ function Prompt:init()
         self.ges_events = {
             TapPrompt = { GestureRange:new{ ges = "tap", range = self.dimen } },
             HoldPrompt = { GestureRange:new{ ges = "hold", range = self.dimen } },
+            -- a slide over the keyboard's space bar moves the caret
+            PanPrompt = { GestureRange:new{ ges = "pan", range = self.dimen } },
+            HoldPanPrompt = { GestureRange:new{ ges = "hold_pan", range = self.dimen } },
+            PanReleasePrompt = { GestureRange:new{ ges = "pan_release", range = self.dimen } },
+            HoldReleasePrompt = { GestureRange:new{ ges = "hold_release", range = self.dimen } },
+            SwipePrompt = { GestureRange:new{ ges = "swipe", range = self.dimen } },
         }
     end
 end
@@ -413,9 +421,10 @@ function Prompt:refreshTyping(text_changed, kb_changed, rects, prev_can, prev_er
         return Geom:new{ x = r.x - n, y = r.y - n, w = r.w + 2 * n, h = r.h + 2 * n }
     end
     local n = U(2)
-    local regions = {}
+    -- the field in the fast mode, the keys and the rest in "ui"
+    local fast, regions = {}, {}
     if text_changed then
-        regions[#regions + 1] = grow(self.field_rect, n)
+        fast[#fast + 1] = grow(self.field_rect, n)
         if self.shown_can ~= prev_can then
             regions[#regions + 1] = grow(self.save_rect, n)
         end
@@ -431,6 +440,9 @@ function Prompt:refreshTyping(text_changed, kb_changed, rects, prev_can, prev_er
     end
     for _i, r in ipairs(regions) do
         UIManager:setDirty(self, function() return "ui", r end)
+    end
+    for _i, r in ipairs(fast) do
+        UIManager:setDirty(self, function() return Keyboard.REFRESH, r end)
     end
 end
 
@@ -501,15 +513,59 @@ end
 -- Hold the keyboard's delete key: the whole name is cleared.
 function Prompt:onHoldPrompt(_ev, ges)
     if self.kb_open and self.kb_y and ges.pos.y >= self.kb_y then
-        local _handled, text_changed, kb_changed = self.kb:hold(ges.pos, self.kb_y)
+        local _handled, text_changed, kb_changed, rects = self.kb:hold(ges.pos, self.kb_y)
         if self.kb_open and (text_changed or kb_changed) then
             local prev_can, prev_error = self.shown_can, self.shown_error
             if text_changed then self:validateName() end
             self:rebuild()
-            self:refreshTyping(text_changed, kb_changed, nil, prev_can, prev_error)
+            self:refreshTyping(text_changed, kb_changed, rects, prev_can, prev_error)
         end
     end
     return true
+end
+
+-- The finger sliding over the keyboard's space bar: the caret follows it, and
+-- only the name pill is drawn again (as when the caret is placed by a tap).
+function Prompt:onPanPrompt(_ev, ges)
+    if not (self.kb_open and self.kb_y) then return false end
+    local handled, moved = self.kb:pan(ges, self.kb_y)
+    if moved then
+        local prev_can, prev_error = self.shown_can, self.shown_error
+        self:rebuild()
+        self:refreshTyping(true, false, nil, prev_can, prev_error)
+    end
+    return handled
+end
+
+function Prompt:onHoldPanPrompt(ev, ges) return self:onPanPrompt(ev, ges) end
+
+-- The finger lets go of a slide on the space bar: the field, moved in the fast
+-- mode, is drawn properly again.
+function Prompt:onPanReleasePrompt()
+    local was = self.kb:panEnd()
+    if was and self.kb_open and self.field_rect then
+        local n, f = U(2), self.field_rect
+        local region = Geom:new{ x = f.x - n, y = f.y - n, w = f.w + 2 * n, h = f.h + 2 * n }
+        UIManager:setDirty(self, function() return "ui", region end)
+    end
+    return was
+end
+function Prompt:onHoldReleasePrompt() return self:onPanReleasePrompt() end
+
+-- The swipe that can close a quick slide is eaten. Any other swipe that started
+-- on a key is a tap (see Keyboard:swipe): typing fast, the touch driver
+-- sometimes reads a tap as a short swipe, and the letter would be lost.
+function Prompt:onSwipePrompt(_ev, ges)
+    if self.kb:recentDrag() then return true end
+    if not (self.kb_open and self.kb_y) then return false end
+    local handled, text_changed, kb_changed, rects = self.kb:swipe(ges, self.kb_y)
+    if handled and self.kb_open and (text_changed or kb_changed) then
+        local prev_can, prev_error = self.shown_can, self.shown_error
+        if text_changed then self:validateName() end
+        self:rebuild()
+        self:refreshTyping(text_changed, kb_changed, rects, prev_can, prev_error)
+    end
+    return handled
 end
 
 function Prompt:onClose()

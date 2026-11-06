@@ -41,7 +41,7 @@ local UIManager       = require("ui/uimanager")
 local VerticalGroup   = require("ui/widget/verticalgroup")
 local VerticalSpan    = require("ui/widget/verticalspan")
 local OverlapGroup    = require("ui/widget/overlapgroup")
-local _               = require("gettext")
+local _               = require("kobold.i18n")
 local OptionSheet     = require("kobold.ui.option_sheet")
 local KoboldWidgets   = require("kobold.ui.widgets")
 

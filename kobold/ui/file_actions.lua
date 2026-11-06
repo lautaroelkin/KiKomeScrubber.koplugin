@@ -13,7 +13,7 @@ local RenamePrompt = require("kobold.ui.rename_prompt")
 local Toast        = require("kobold.ui.toast")
 local FileOps      = require("kobold.data.fileops")
 local lfs          = require("libs/libkoreader-lfs")
-local _            = require("gettext")
+local _            = require("kobold.i18n")
 
 local FileActions = {}
 

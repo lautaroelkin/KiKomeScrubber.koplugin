@@ -2,9 +2,9 @@
 -- Battery icon for the status bar. Kobold's own icons are drawn with bars
 -- (icons/battery-full.svg, -medium, -low and the empty battery.svg; the
 -- charging one is battery-charging.svg), the tip on the left, and the one that
--- matches the charge is shown; or the charge percentage is written inside the
--- empty one (Kobold Settings > Battery). KOReader's old icon has a black fill
--- that follows the charge instead.
+-- matches the charge is shown. In percentage mode (Kobold Settings > Battery)
+-- the icon is the same, and the charge percentage is written to its right.
+-- KOReader's old icon has a black fill that follows the charge instead.
 
 local Blitbuffer      = require("ffi/blitbuffer")
 local Device          = require("device")
@@ -78,9 +78,9 @@ function KoboldBattery:init()
     local set = require("kobold.data.prefs").get("icons") == "koreader" and SETS.koreader or SETS.kobold
     self.set = set
     local file = existing(set.icon)
-    -- Not in percentage mode, the icon follows the charge: the bars icon that
-    -- matches it (Kobold's icons)...
-    if set.bars and self.style ~= "percent" and self.level then
+    -- The icon follows the charge: the bars icon that matches it (Kobold's
+    -- icons)...
+    if set.bars and self.level then
         for _i, bar in ipairs(set.bars) do
             if self.level >= bar.min then
                 file = existing(bar.icon) or file
@@ -89,7 +89,7 @@ function KoboldBattery:init()
         end
     end
     -- ...and while charging, the charging icon.
-    local charging_svg = self.style ~= "percent" and charging() and existing(set.charging)
+    local charging_svg = charging() and existing(set.charging)
     if charging_svg then file = charging_svg end
     self.show_level = not (charging_svg and set.no_fill_while_charging)
     if file then
@@ -102,7 +102,27 @@ function KoboldBattery:init()
         end)
         if ok then self.icon = icon end
     end
-    self.dimen = Geom:new{ w = self.size, h = self.slot_h }
+    -- In percentage mode the slot is wider: the number sits to the right of the
+    -- icon, in room kept for three digits so the icons beside it never shift.
+    self.dimen = Geom:new{
+        w = self.size + (self.style == "percent" and KoboldBattery.labelWidth() or 0),
+        h = self.slot_h,
+    }
+end
+
+-- The face of the percentage written beside the icon.
+local function labelFace()
+    return Font:getFace("cfont", 14)
+end
+
+local LABEL_GAP = 2   -- dp between the icon and its percentage
+
+-- Room the percentage takes to the right of the icon: the gap and "100%".
+function KoboldBattery.labelWidth()
+    local t = TextWidget:new{ text = "100%", face = labelFace() }
+    local w = t:getSize().w
+    t:free()
+    return Screen:scaleBySize(LABEL_GAP) + w
 end
 
 function KoboldBattery:getSize()
@@ -114,12 +134,12 @@ end
 function KoboldBattery:paintTo(bb, x, y)
     self.dimen.x, self.dimen.y = x, y
     local top = y + math.floor((self.slot_h - self.size) / 2)
-    local INNER, FILL = self.set.INNER, self.set.FILL
+    local FILL = self.set.FILL
     local u = self.size / 24
     local function px(v) return math.floor(v * u + 0.5) end
     -- The fill is painted first and the icon over it, so a charging bolt
     -- stays visible on top of the fill.
-    if FILL and self.level and self.show_level and self.style ~= "percent" then
+    if FILL and self.level and self.show_level then
         -- Drains toward the tip: the full part stays on the right.
         local fill_w = px(FILL.w)
         local w = math.floor(fill_w * self.level / 100 + 0.5)
@@ -129,19 +149,17 @@ function KoboldBattery:paintTo(bb, x, y)
         end
     end
     if self.icon then self.icon:paintTo(bb, x, top) end
-    if not self.level or not self.show_level then return end
 
-    if self.style == "percent" then
-        local inner_w, inner_h = px(INNER.w), px(INNER.h)
+    -- Percentage mode: the number to the right of the icon, centred on the row.
+    if self.style == "percent" and self.level then
         local text = TextWidget:new{
-            text = tostring(math.floor(self.level + 0.5)),
-            face = Font:getFace("cfont", math.max(6, math.floor(inner_h * 0.75 / Screen:scaleBySize(1)))),
-            bold = true,
-            max_width = inner_w,
+            text = math.floor(self.level + 0.5) .. "%",
+            face = labelFace(),
+            max_width = self.dimen.w - self.size,
         }
         local ts = text:getSize()
-        text:paintTo(bb, x + px(INNER.x) + math.floor((inner_w - ts.w) / 2),
-            top + px(INNER.y) + math.floor((inner_h - ts.h) / 2))
+        text:paintTo(bb, x + self.size + Screen:scaleBySize(LABEL_GAP),
+            y + math.floor((self.slot_h - ts.h) / 2))
         text:free()
     end
 end
