@@ -112,6 +112,13 @@ local function bookProps(file)
     props.series = nonEmpty(props.series) or info.series
     props.series_index = props.series_index or info.series_index
     props.pages = props.pages or info.pages
+    -- A series emptied on purpose (Metadata saves it as "") stays empty: the
+    -- book's own series must not come back through the fallbacks above.
+    local custom = Metadata.custom(file)
+    if custom and custom.series == "" then
+        props.series = nil
+        props.series_index = nil
+    end
     return props, info
 end
 
@@ -721,6 +728,8 @@ local SETTINGS_ROWS = {
     { id = "reset",   icon = "undo",                      text = _("Reset this document") },
     { id = "export",  icon = "2square-arrow-right-enter", text = _("Export notes of the document (.md)") },
     { id = "refresh", icon = "refresh-cw",                text = _("Refresh metadata") },
+    -- the page count of Metadata used as the book's stable pages (its name carries the number)
+    { id = "stable",  icon = "book-marked",               text = _("Stable pages") },
 }
 
 -- The book's file: its own row of buttons under the card of rows. Select
@@ -1024,6 +1033,13 @@ end
 local REVIEW_MAX = 2000   -- characters
 
 local function trim(s) return (s:match("^%s*(.-)%s*$")) end
+
+-- Seconds, with decimals when the socket library has them.
+local function clock()
+    local ok, socket = pcall(require, "socket")
+    if ok and socket and socket.gettime then return socket.gettime() end
+    return os.time()
+end
 local function ulen(s) return #(s:gsub("[\128-\191]", "")) end
 
 -- Width of a piece of text, remembered: wrapping asks for the same lines
@@ -1169,6 +1185,10 @@ end
 
 function KoboldBookDetails:editorCanSave()
     local st = self.editor
+    if st ~= nil and st.always then
+        -- a search: it can be done with the text as it comes, once there is a text
+        return trim(editorText(st)) ~= ""
+    end
     return st ~= nil and editorSignature(st) ~= st.original
 end
 
@@ -1206,7 +1226,7 @@ function KoboldBookDetails:buildEditor()
     st.shown_can = can
     local grey = Blitbuffer.Color8(0x77)
     local save_label = TextWidget:new{
-        text = _("Save"), face = KoboldWidgets.face(16), bold = true,
+        text = st.save_text or _("Save"), face = KoboldWidgets.face(16), bold = true,
         fgcolor = can and WHITE or grey, bgcolor = can and BLACK or SOFT,
     }
     local save_w = save_label:getSize().w + 2 * U(18)
@@ -1259,10 +1279,14 @@ function KoboldBookDetails:buildEditor()
     local field_h = math.max(U(90), bottom - field_y - counter_gap - counter_h - num_extra)
     if st.chips then
         field_h = math.min(field_h, 4 * chip_row_h + 2 * field_pad)
-    elseif not st.multiline or st.suggest then
+    elseif not st.multiline or st.suggest or st.online then
         -- A short box. A field with a list to pick from (the authors, one to
         -- a line) is short too: a box that took all the room left none for it.
-        field_h = math.min(field_h, (st.num and 2 or 3) * line_h + 2 * field_pad)
+        -- The same for the "Search online" row under a text of several lines
+        -- (the description), with a few more lines.
+        local lines = st.num and 2 or 3
+        if st.multiline and not st.suggest then lines = 5 end
+        field_h = math.min(field_h, lines * line_h + 2 * field_pad)
     end
     local avail_h = field_h - 2 * field_pad
     local counter_y = field_y + field_h + counter_gap + num_extra
@@ -1280,19 +1304,30 @@ function KoboldBookDetails:buildEditor()
     } or nil
     local hint_h = hint and (gap + hint:getSize().h) or 0
     local matches = st.suggest and st.suggest(st.value, st) or nil
+    if st.online then
+        -- "Search online" closes the list of every field that has it
+        local with_online = {}
+        for _i, e in ipairs(matches or {}) do with_online[#with_online + 1] = e end
+        with_online[#with_online + 1] = { online = true, name = "", label = _("Search online") }
+        matches = with_online
+    end
     local sug_y = counter_y + counter_h + hint_h + gap
     local sug_row_h = U(M.row)
     local sug_caption, sug_fit, sug_cap_h, sug_h = nil, 0, 0, 0
     st.had_sug = st.sug_region   -- where the list was: it is cleared if it goes
-    st.sug, st.sug_rects, st.sug_region = {}, {}, nil
+    st.sug, st.sug_rects, st.sug_region, st.sug_online = {}, {}, nil, nil
     if matches and #matches > 0 then
+        -- with only the "Search online" row there is no list to name
+        local only_online = st.online and #matches == 1
         sug_caption = TextWidget:new{
-            text = st.suggest_title or "", face = KoboldWidgets.face(12),
+            text = (only_online or not st.suggest_title) and " " or st.suggest_title, face = KoboldWidgets.face(12),
             fgcolor = KoboldWidgets.subtitleColor(),
         }
         sug_cap_h = sug_caption:getSize().h + U(4)
         sug_fit = math.min(6, #matches, math.floor((bottom - sug_y - sug_cap_h) / (sug_row_h + U(1))))
         if sug_fit >= 1 then
+            -- when the list does not fit, "Search online" takes the last row
+            if st.online and sug_fit < #matches then matches[sug_fit] = matches[#matches] end
             sug_h = sug_cap_h + sug_fit * sug_row_h + (sug_fit - 1) * U(1)
         else
             sug_fit = 0
@@ -1559,13 +1594,19 @@ function KoboldBookDetails:buildEditor()
                     dimen = Geom:new{ w = inner_w, h = sug_row_h },
                     HorizontalGroup:new{
                         HorizontalSpan:new{ width = U(6) },
-                        TextWidget:new{ text = m.label or m.name, face = KoboldWidgets.face(17), max_width = inner_w - U(80) },
+                        TextWidget:new{
+                            text = m.label or m.name, face = KoboldWidgets.face(17), bold = m.online and true or false,
+                            max_width = inner_w - U(80),
+                        },
                     },
                 },
                 RightContainer:new{
                     dimen = Geom:new{ w = inner_w, h = sug_row_h },
                     HorizontalGroup:new{
-                        (m.count and m.count > 0) and TextWidget:new{
+                        m.online and TextWidget:new{
+                            text = "›", face = KoboldWidgets.face(22),
+                            fgcolor = KoboldWidgets.subtitleColor(),
+                        } or (m.count and m.count > 0) and TextWidget:new{
                             text = tostring(m.count), face = KoboldWidgets.face(14),
                             fgcolor = KoboldWidgets.subtitleColor(),
                         } or HorizontalSpan:new{ width = 0 },
@@ -1574,6 +1615,7 @@ function KoboldBookDetails:buildEditor()
                 },
             }
             st.sug[i] = m.name
+            if m.online then st.sug_online = i end
             st.sug_rects[i] = Geom:new{
                 x = x0, y = sug_y + sug_cap_h + (i - 1) * (sug_row_h + U(1)), w = inner_w, h = sug_row_h,
             }
@@ -1618,7 +1660,10 @@ function KoboldBookDetails:openEditor(opts)
         max = opts.max or REVIEW_MAX, multiline = opts.multiline and true or false,
         lower = opts.lowercase and true or false,   -- no capital for the first letter
         save = opts.save, restore = opts.restore,
+        save_text = opts.save_text,   -- the word of the Save pill ("Search")
+        always = opts.always,         -- the pill is on whenever there is a text
         suggest = opts.suggest, suggest_title = opts.suggest_title,   -- a list of values to pick from
+        online = opts.online,   -- function(st): the "Search online" row at the end of the list
         pick = opts.pick,   -- what tapping one does (by default it replaces the text)
         hint = opts.hint,   -- a line of explanation under the counter
         back = self.view,   -- the screen it goes back to
@@ -1727,6 +1772,9 @@ function KoboldBookDetails:closeEditor(save)
     self.editor = nil
     self.view = st.back or "edit"
     self:refresh(region)
+    -- the same area once more when the panel is free, in case this update is
+    -- lost (a lot of black changes back to white at once)
+    require("kobold.ui.refresh").settle(self, function() return region end)
 end
 
 -- The review of the book: free text, several lines.
@@ -1823,6 +1871,12 @@ end
 function KoboldBookDetails:onEditorTap(pos)
     local st = self.editor
     if not st then return end
+    -- asking the sources: a tap cancels (the one that started it does not)
+    if self.online_busy then
+        if clock() - (self.online_started or 0) >= 1 then self.online_cancel = true end
+        return
+    end
+    if self.online_settle then return end
     if pos:intersectWith(st.cancel_rect) then return self:closeEditor(false) end
     if pos:intersectWith(st.save_rect) then
         if self:editorCanSave() then self:closeEditor(true) end
@@ -1834,6 +1888,10 @@ function KoboldBookDetails:onEditorTap(pos)
     end
     for i, rect in ipairs(st.sug_rects or {}) do
         if pos:intersectWith(rect) then
+            if st.sug_online == i then
+                st.online(st)
+                return
+            end
             -- a picked value replaces the text (or, for keywords, becomes a
             -- pill); Save keeps it
             local prev_can = st.shown_can
@@ -1983,13 +2041,49 @@ local META_FIELDS = {
     { key = "keywords",     label = _("Keywords"),      max = 500, chips = true,
       placeholder = _("Type a keyword and press Enter") },
     { key = "description",  label = _("Description"),   max = 4000, multiline = true },
+    -- the "More details" page of the screen: not as important, so one row
+    -- opens them instead of three
+    { key = "publisher",    label = _("Publisher"),         max = 200, more = true },
+    { key = "year",         label = _("Publication year"),  max = 4,   more = true,
+      placeholder = _("Four digits, like 2019") },
+    { key = "isbn",         label = _("ISBN"),              max = 20,  more = true,
+      placeholder = _("10 or 13 digits") },
+    -- the pages of the edition: the EPUB has no place for it (no_write), so it stays in KiKome
+    { key = "pages",        label = _("Pages"),             max = 5,   more = true, no_write = true,
+      placeholder = _("Pages of the edition, like 496") },
 }
 
 -- The cover goes first on this screen: it is part of how a book looks, like its title.
 -- The series number has no row of its own: it is edited together with the series.
 local META_ROWS = { { key = "cover", label = _("Cover") } }
+local MORE_ROWS, MORE_KEYS = {}, {}
 for _i, f in ipairs(META_FIELDS) do
-    if f.key ~= "series_index" then META_ROWS[#META_ROWS + 1] = f end
+    if f.more then
+        MORE_ROWS[#MORE_ROWS + 1] = f
+        MORE_KEYS[f.key] = true
+    elseif f.key ~= "series_index" then
+        META_ROWS[#META_ROWS + 1] = f
+    end
+end
+META_ROWS[#META_ROWS + 1] = { key = "more", label = _("More details") }
+
+-- The fields that have "Search online" under them: what the online sources say
+-- about the book (kobold/data/online_meta.lua) as a list to pick from.
+local ONLINE_KEYS = {
+    title = true, authors = true, series = true, language = true, keywords = true,
+    description = true, publisher = true, year = true, isbn = true, pages = true,
+}
+
+-- The first n characters of a text (whole UTF-8 characters), and whether it was cut.
+local function cutChars(text, n)
+    if ulen(text) <= n then return text, false end
+    local out, count = {}, 0
+    for c in text:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+        count = count + 1
+        if count > n then break end
+        out[#out + 1] = c
+    end
+    return table.concat(out), true
 end
 
 -- One line per author, no empty ones.
@@ -2014,6 +2108,25 @@ function KoboldBookDetails:loadMeta()
     if not self.meta_restored then self.meta_restored = {} end
 end
 
+-- What the book itself says about its publisher, year and ISBN: read from the
+-- EPUB (see Metadata.extraOriginals); for the ISBN the identifiers KOReader
+-- reads count too, which also covers books that are not EPUBs.
+function KoboldBookDetails:extraOriginals()
+    if not self.meta then return {} end
+    if not self.meta.extra then
+        local info = Metadata.extraOriginals(self.file)
+        local out = { publisher = info.publisher, year = info.year, isbn = info.isbn }
+        if not out.isbn then
+            local ok, isbn = pcall(function()
+                return require("kobold.data.cover_online").isbnFrom(self.meta.props.identifiers)
+            end)
+            if ok then out.isbn = isbn end
+        end
+        self.meta.extra = out
+    end
+    return self.meta.extra
+end
+
 -- A field's value as text, or nil when the book has none. The corrected value
 -- wins; a field restored a moment ago shows the book's own value even if the
 -- cover browser has not read the book again yet.
@@ -2021,7 +2134,11 @@ function KoboldBookDetails:metaValue(key)
     local m = self.meta
     local v = m.custom[key]
     if v == nil then v = self.meta_restored[key] end
-    if v == nil then v = m.props[key] end
+    if v == nil and MORE_KEYS[key] then
+        v = self:extraOriginals()[key]
+    elseif v == nil then
+        v = m.props[key]
+    end
     if v == nil then return nil end
     if type(v) == "number" then v = string.format("%g", v) end
     v = tostring(v)
@@ -2031,6 +2148,8 @@ end
 -- A change was saved: KOReader's cover browser reads the book again, the
 -- screen below shows it when this page closes, and this one is drawn again.
 function KoboldBookDetails:metaSaved(restored)
+    local publisher_before = self.meta and self.meta.custom and self.meta.custom.publisher
+    local pages_before = self.meta and self.meta.custom and self.meta.custom.pages
     if restored and self.meta then
         if type(restored) == "string" then restored = { restored } end
         for _i, key in ipairs(restored) do
@@ -2041,6 +2160,13 @@ function KoboldBookDetails:metaSaved(restored)
     self.meta_changed = true
     self.changed = true
     self:loadMeta()
+    if self.meta.custom.publisher ~= publisher_before then
+        pcall(function() require("kobold.data.publishers").update(self.file) end)
+    end
+    if self.meta.custom.pages ~= pages_before then
+        local ok, err = pcall(function() self:applyStablePages() end)
+        if not ok then logger.warn("KiKome: stable pages after Pages changed failed:", tostring(err)) end
+    end
 end
 
 function KoboldBookDetails:buildMetadata(level)
@@ -2062,13 +2188,20 @@ function KoboldBookDetails:buildMetadata(level)
     local row_h    = math.floor(U(M.row) * 1.35)
     local line_h   = U(1)
     local card_pad = U(M.card_pad)
-    local card_h   = #META_ROWS * row_h + (#META_ROWS - 1) * line_h + 2 * card_pad
-    local any_custom = false
+    local rows_def = self.meta_more and MORE_ROWS or META_ROWS
+    local card_h   = #rows_def * row_h + (#rows_def - 1) * line_h + 2 * card_pad
+    local any_custom, any_writable = false, false
     for _i, f in ipairs(META_FIELDS) do
-        if meta.custom[f.key] ~= nil then any_custom = true end
+        if meta.custom[f.key] ~= nil then
+            any_custom = true
+            if not f.no_write then any_writable = true end
+        end
     end
     local restore_h = U(40)
-    local used = top_h + gap + card_h + (any_custom and (gap + restore_h) or 0)
+    -- the pill is there for a corrected field AND for a custom cover
+    -- (not on the "More details" page: the pill restores everything, and that page is about three fields)
+    local show_restore = (not self.meta_more) and (any_custom or meta.cover_custom)
+    local used = top_h + gap + card_h + (show_restore and (gap + restore_h) or 0)
     if used > inner_h and level < #LEVELS then
         return self:buildMetadata(level + 1)
     end
@@ -2084,7 +2217,7 @@ function KoboldBookDetails:buildMetadata(level)
     -- Beside the close button: the pill that writes the corrections into the
     -- book file. Black when it can (an EPUB with something corrected), grey
     -- when it cannot (a tap says why).
-    local can_write = any_custom and Metadata.isEpub(self.file)
+    local can_write = (any_writable or meta.cover_custom) and Metadata.isEpub(self.file)
     local write_grey = Blitbuffer.Color8(0x77)
     local write_label = TextWidget:new{
         text = _("Write to book"), face = KoboldWidgets.face(15), bold = true,
@@ -2096,7 +2229,10 @@ function KoboldBookDetails:buildMetadata(level)
         align = "center",
         back_button,
         HorizontalSpan:new{ width = U(12) },
-        TextWidget:new{ text = _("Metadata"), face = KoboldWidgets.face(19), bold = true },
+        TextWidget:new{
+            text = self.meta_more and _("More details") or _("Metadata"),
+            face = KoboldWidgets.face(19), bold = true,
+        },
     }
     local top_bar = OverlapGroup:new{
         dimen = Geom:new{ w = inner_w, h = top_h },
@@ -2121,15 +2257,26 @@ function KoboldBookDetails:buildMetadata(level)
     local card_w = inner_w - 2 * card_pad
     local grey = Blitbuffer.Color8(0x77)
     local list = VerticalGroup:new{ align = "left" }
-    for i, f in ipairs(META_ROWS) do
+    for i, f in ipairs(rows_def) do
         if i > 1 then
             list[#list + 1] = LineWidget:new{ dimen = Geom:new{ w = card_w, h = line_h }, background = LINE }
         end
         local is_cover = (f.key == "cover")
+        local is_more = (f.key == "more")
         local is_custom = is_cover and meta.cover_custom or (meta.custom[f.key] ~= nil)
         if f.key == "series" and meta.custom.series_index ~= nil then is_custom = true end
         local text
-        if is_cover then
+        if is_more then
+            -- what the page holds, in one line: publisher · year · ISBN
+            local parts = {}
+            for _j, mf in ipairs(MORE_ROWS) do
+                local v = self:metaValue(mf.key)
+                if v and mf.key == "pages" then v = string.format(_("%s pages"), v) end
+                if v then parts[#parts + 1] = v end
+                if meta.custom[mf.key] ~= nil then is_custom = true end
+            end
+            if #parts > 0 then text = table.concat(parts, "  ·  ") end
+        elseif is_cover then
             text = meta.cover_custom and _("Custom cover") or _("From the book")
         else
             text = self:metaValue(f.key)
@@ -2142,7 +2289,7 @@ function KoboldBookDetails:buildMetadata(level)
         end
         local value_w = card_w - U(40)
         local value = TextWidget:new{
-            text = text or _("Not set"),
+            text = text or (is_more and _("Publisher, year and ISBN") or _("Not set")),
             face = text and KoboldWidgets.face(16) or italicFace(16),
             fgcolor = text and BLACK or grey,
             max_width = value_w,
@@ -2183,7 +2330,7 @@ function KoboldBookDetails:buildMetadata(level)
         card,
     }
     rects.restore = nil
-    if any_custom then
+    if show_restore then
         local label = TextWidget:new{
             text = _("Restore original metadata"), face = KoboldWidgets.face(15), bold = true,
             max_width = inner_w - U(44),
@@ -2209,6 +2356,7 @@ function KoboldBookDetails:buildMetadata(level)
 end
 
 function KoboldBookDetails:openMetadata()
+    self.meta_more = false
     self.meta_restored = {}
     self:loadMeta()
     self.view = "metadata"
@@ -2216,9 +2364,915 @@ function KoboldBookDetails:openMetadata()
 end
 
 function KoboldBookDetails:closeMetadata()
+    if self.meta_more then
+        -- from "More details" back is the Metadata page
+        self.meta_more = false
+        self:refresh()
+        return
+    end
     self.view = "edit"
     self.meta_rects = nil
     self:refresh()
+end
+
+-- ── The cover: picking one from the internet ───────────────────────────────
+-- The Cover row of Metadata opens this screen. First two rows: "Search
+-- online" and (when the book has a custom cover) "Use the book's own cover".
+-- A search looks for the book on Apple Books, Google Books and Open Library
+-- (see kobold/data/cover_online.lua) and shows what it found as a grid of
+-- covers with their source and size, paged. Tapping one asks, then saves it
+-- as the book's custom cover (KOReader's own: the book file is not touched).
+-- Back from the grid returns to the two rows.
+
+-- The pictures of the grid are freed when it is drawn again or left.
+function KoboldBookDetails:freeCoverWidgets()
+    for _i, w in ipairs(self.cover_widgets or {}) do
+        pcall(function() w:free() end)
+    end
+    self.cover_widgets = nil
+end
+
+function KoboldBookDetails:openCover()
+    self.cover_results = nil
+    self.cover_page = 1
+    self.view = "cover"
+    self:refresh()
+end
+
+-- Back: from the grid to the two rows, from those to Metadata.
+-- Stops the search that is running. It takes effect between two requests: one
+-- that is already on its way has to end first (a few seconds at most).
+function KoboldBookDetails:cancelCoverSearch()
+    if not self.cover_busy or self.cover_cancel then return end
+    self.cover_cancel = true
+    Toast.show(_("Search cancelled."))
+end
+
+function KoboldBookDetails:closeCover()
+    if self.cover_busy then
+        -- Back while it searches: the search stops
+        self:cancelCoverSearch()
+        return
+    end
+    if self.cover_results then
+        self.cover_results = nil
+        self.cover_page = 1
+        self:refresh()
+        return
+    end
+    self:freeCoverWidgets()
+    self.cover_rects = nil
+    self.view = "metadata"
+    self:refresh()
+end
+
+function KoboldBookDetails:stepCoverPage(by)
+    if self.cover_busy or self.cover_settle then return end
+    local per_page = math.max(1, self.cover_per_page or 1)
+    local pages = math.max(1, math.ceil(#(self.cover_results or {}) / per_page))
+    local new = math.max(1, math.min(pages, (self.cover_page or 1) + by))
+    if new == self.cover_page then return end
+    self.cover_page = new
+    self:refresh()
+end
+
+-- Looks for covers of this book on the internet. The search runs in steps
+-- (a coroutine the screen resumes every moment, see CoverOnline.search), so
+-- the screen keeps answering between requests: a tap while it works is
+-- ignored (Back cancels it) instead of piling up behind a blocked screen.
+function KoboldBookDetails:searchCovers(opts)
+    if self.cover_busy then return end
+    opts = opts or {}
+    local CoverOnline = require("kobold.data.cover_online")
+    local title = self:metaValue("title")
+    local isbn = CoverOnline.isbnFrom(self.meta.props.identifiers)
+    isbn = self:metaValue("isbn") or isbn   -- the one corrected here wins
+    local author = self:metaValue("authors")
+    if author then author = author:match("([^\n]+)") end
+    local language = self:metaValue("language")
+    local book
+    if opts.query and opts.query ~= "" then
+        -- typed by hand: only these words count (no ISBN, no author), and the
+        -- stores of several countries are asked, to find other languages
+        book = { filepath = self.file, title = opts.query, language = language, wide = true }
+    else
+        if not title and not isbn then
+            Toast.error(_("The book needs a title to look for its cover."))
+            return
+        end
+        book = { filepath = self.file, title = title, author = author, isbn = isbn, language = language }
+    end
+
+    local function run()
+        if self.closed or self.view ~= "cover" or self.cover_busy then return end
+        self.cover_searched = true
+        self.cover_busy = true
+        self.cover_cancel = false
+        self.cover_started = clock()
+        local working
+        local function progress(text)
+            Toast.dismiss(working)
+            working = Toast.working(text .. "\n" .. _("Tap to cancel"), { timeout = 120 })
+        end
+        local co = coroutine.create(function() return CoverOnline.search(book, progress) end)
+
+        -- Taps made while it worked are still waiting to be delivered: for a
+        -- moment after the end they are ignored.
+        local function stop()
+            Toast.dismiss(working)
+            self.cover_busy = false
+            self.cover_settle = true
+            UIManager:scheduleIn(0.7, function() self.cover_settle = false end)
+        end
+        local function failedSources()
+            local parts = {}
+            for _i, r in ipairs(CoverOnline.report or {}) do
+                parts[#parts + 1] = string.format("%s (%s)", r.source, tostring(r.reason))
+            end
+            return table.concat(parts, ", ")
+        end
+        local function finish(list, err)
+            stop()
+            if self.closed then return end
+            if err then
+                logger.warn("KiKome: the cover search failed:", tostring(err))
+                Toast.error(_("The search failed. Check the connection and try again."))
+                return
+            end
+            local failed = failedSources()
+            if #list == 0 then
+                local msg = _("No covers found. Check the title and the author of the book, and the connection.")
+                if failed ~= "" then msg = msg .. "\n" .. string.format(_("Failed: %s"), failed) end
+                Toast.show(msg, { timeout = 7 })
+                return
+            end
+            self.cover_results = list
+            self.cover_page = 1
+            self:refresh()
+            if failed ~= "" then
+                Toast.show(string.format(_("Some sources failed: %s"), failed), { timeout = 6 })
+            end
+        end
+        local function tick()
+            if self.closed then
+                Toast.dismiss(working)
+                return
+            end
+            if self.cover_cancel then
+                stop()
+                pcall(CoverOnline.cleanup)
+                return
+            end
+            local ok, res = coroutine.resume(co)
+            if not ok then return finish(nil, res) end
+            if coroutine.status(co) == "dead" then return finish(res) end
+            UIManager:scheduleIn(0.05, tick)
+        end
+        tick()
+    end
+
+    local ok_nm, NetworkMgr = pcall(require, "ui/network/manager")
+    if ok_nm and NetworkMgr and NetworkMgr.runWhenOnline then
+        NetworkMgr:runWhenOnline(run)
+    else
+        run()
+    end
+end
+
+-- Looks for covers with words typed by hand: another title, the title in
+-- another language, the author's name... The text starts as the book's title
+-- and author (or the last words that were typed).
+function KoboldBookDetails:askCoverQuery()
+    if self.cover_busy then return end
+    local title = self:metaValue("title")
+    local author = self:metaValue("authors")
+    if author then author = author:match("([^\n]+)") end
+    local start = self.cover_query
+    if not start or start == "" then
+        start = title or ""
+        if author and start ~= "" then start = start .. " " .. author end
+    end
+    self:openEditor{
+        heading = _("Search covers"),
+        placeholder = _("Title, author, another language…"),
+        value = start, max = 120, multiline = false,
+        save_text = _("Search"), always = true,
+        hint = function()
+            return _("Apple Books looks in the stores of several countries.")
+        end,
+        save = function(text)
+            text = trim(text or "")
+            if text == "" then return false end
+            self.cover_query = text
+            -- when the editor has closed and the covers screen is back
+            UIManager:nextTick(function()
+                if not self.closed then self:searchCovers{ query = text } end
+            end)
+            return true
+        end,
+    }
+end
+
+-- A picture already on the device (JPG or PNG) as the cover: the folders are
+-- browsed on the same full-screen list the Copy / Move destination uses. A
+-- folder says how many pictures it holds and a picture shows itself instead of
+-- the icon. Nothing here is read for the rows that are not on screen: the
+-- folder counts and the pictures are asked row by row, and the pictures come
+-- one moment after the list (see list_picker.lua), so opening a folder never
+-- waits for them.
+local SCAN_MAX = 1000   -- entries looked at to count the pictures of a folder
+local NOT_FOLDERS = {   -- files that are not worth asking whether they are folders
+    epub = true, pdf = true, mobi = true, azw = true, azw3 = true, kepub = true, cbz = true,
+    cbr = true, fb2 = true, djvu = true, txt = true, zip = true, rar = true, json = true,
+    xml = true, html = true, htm = true, db = true, lua = true, mp3 = true, mp4 = true,
+    gif = true, webp = true, bmp = true, doc = true, docx = true, odt = true,
+}
+
+function KoboldBookDetails:pickLocalCover()
+    if self.cover_busy then return end
+    local CoverOnline = require("kobold.data.cover_online")
+    local Thumbs = require("kobold.data.image_thumbs")
+    local function isDir(path) return path ~= nil and lfs.attributes(path, "mode") == "directory" end
+    local function parentOf(dir)
+        local parent = dir:match("^(.*)/[^/]+/*$")
+        if not parent or parent == "" then return "/" end
+        return parent
+    end
+    local function isPicture(name)
+        local l = name:lower()
+        return l:match("%.jpe?g$") ~= nil or l:match("%.png$") ~= nil
+    end
+    -- where it opens: the last folder used, else the book's folder, else home
+    local start = self.cover_pick_dir
+    if not isDir(start) then start = self.file and self.file:match("^(.*)/[^/]+$") end
+    if not isDir(start) then
+        start = G_reader_settings and G_reader_settings:readSetting("home_dir")
+    end
+    if not isDir(start) then start = "/" end
+    start = (start:gsub("(.)/+$", "%1"))
+
+    -- The pictures a folder holds, counted by name alone (no file is opened or
+    -- measured), looking at no more than SCAN_MAX entries.
+    local function countPictures(dir)
+        local ok, iter, st = pcall(lfs.dir, dir)
+        if not ok then return false end
+        local n, seen = 0, 0
+        for name in iter, st do
+            seen = seen + 1
+            if name:sub(1, 1) ~= "." and isPicture(name) then n = n + 1 end
+            if seen >= SCAN_MAX then return { n = n, cut = true } end
+        end
+        return { n = n, cut = false }
+    end
+
+    ListPicker.show{
+        title = _("Choose an image"),
+        action_label = _("Use image"),
+        empty_text = _("No folders or images here."),
+        row_scale = 1.3, tile = 72,
+        state = { dir = start, counts = {} },
+        subtitle = function(picker) return picker.state.dir end,
+        rows = function(picker)
+            local dir = picker.state.dir
+            local rows, folders, pictures = {}, {}, {}
+            local ok, iter, st = pcall(lfs.dir, dir)
+            if ok then
+                for name in iter, st do
+                    if name:sub(1, 1) ~= "." and not name:match("%.sdr$") then
+                        local path = (dir == "/" and "" or dir) .. "/" .. name
+                        if isPicture(name) then
+                            -- a picture by its name: no need to ask the disk
+                            pictures[#pictures + 1] = { name = name, key = name:lower(), path = path }
+                        else
+                            local ext = name:match("%.(%w+)$")
+                            if not (ext and NOT_FOLDERS[ext:lower()])
+                                and lfs.attributes(path, "mode") == "directory" then
+                                folders[#folders + 1] = { name = name, key = name:lower(), path = path }
+                            end
+                        end
+                    end
+                end
+            end
+            table.sort(folders, function(a, b) return a.key < b.key end)
+            table.sort(pictures, function(a, b) return a.key < b.key end)
+            if dir ~= "/" then
+                rows[#rows + 1] = {
+                    id = "__up", icon = "arrow-left", text = _("Parent folder"),
+                    sub = parentOf(dir), dir = parentOf(dir),
+                }
+            end
+            for _i, f in ipairs(folders) do
+                rows[#rows + 1] = { id = f.path, icon = "folder", text = f.name, marker = "chevron", dir = f.path }
+            end
+            for _i, pic in ipairs(pictures) do
+                rows[#rows + 1] = {
+                    id = pic.path, icon = "image", text = pic.name, marker = "tick",
+                    selected = (picker.state.picked == pic.path), picture = pic.path,
+                }
+            end
+            return rows
+        end,
+        -- the small line of a row on screen: how many pictures a folder holds,
+        -- the size of a picture
+        row_sub = function(row, picker)
+            if row.dir then
+                local counts = picker.state.counts
+                local c = counts[row.dir]
+                if c == nil then
+                    c = countPictures(row.dir)
+                    counts[row.dir] = c
+                end
+                if not c then return "" end
+                if c.n == 0 then return c.cut and "" or _("No images") end
+                if c.cut then return string.format(_("%d+ images"), c.n) end
+                return (c.n == 1) and _("1 image") or string.format(_("%d images"), c.n)
+            end
+            if row.picture then
+                local info = Thumbs.info(row.picture)
+                if not info then return "" end
+                return string.format(_("%d × %d · %d KB"), info.width or 0, info.height or 0,
+                    math.max(1, math.floor((info.size or 0) / 1024)))
+            end
+        end,
+        row_thumb = function(row, size, load)
+            if not row.picture then return nil end
+            return Thumbs.widget(row.picture, size, load)
+        end,
+        on_close = function() Thumbs.clear() end,
+        can_finish = function(picker) return picker.state.picked ~= nil end,
+        on_tap = function(row, picker)
+            if row.dir then
+                picker.state.dir = row.dir
+                picker.state.picked = nil
+                picker:reload(true)
+            else
+                -- one picture at a time: tapping it again lets it go
+                picker.state.picked = (picker.state.picked ~= row.picture) and row.picture or nil
+                picker:reload()
+            end
+        end,
+        on_finish = function(picker)
+            local path = picker.state.picked
+            if not path then return end
+            self.cover_pick_dir = picker.state.dir
+            local cand = CoverOnline.inspect(path)
+            if not cand then
+                Toast.error(_("That file is not a JPG or PNG picture."))
+                return
+            end
+            self:confirmCover(cand)
+        end,
+    }
+end
+
+-- A cover of the grid was tapped: ask first.
+function KoboldBookDetails:confirmCover(cand)
+    local lines = {
+        string.format(_("%s, %d × %d px."), cand.label or "", cand.width or 0, cand.height or 0),
+        "",
+        _("It is saved as the cover of this book only. The book file is not changed."),
+    }
+    if self.meta.cover_custom then
+        lines[#lines + 1] = ""
+        lines[#lines + 1] = _("It replaces the custom cover the book has now.")
+    end
+    require("kobold.ui.confirm_sheet").show{
+        title = _("Use this cover?"),
+        message = table.concat(lines, "\n"),
+        confirm_text = _("Use cover"),
+        on_confirm = function() self:applyCover(cand) end,
+    }
+end
+
+-- Back to Metadata once a cover was saved or removed.
+function KoboldBookDetails:coverChanged(message)
+    Metadata.invalidate(self.file)
+    -- the same as "Refresh metadata" in the book's configuration: the cover
+    -- browser's row and Kobold's pictures of the cover are dropped and read again
+    pcall(function() require("kobold.data.covers").refreshBook(self.file) end)
+    self.meta_changed = true
+    self.changed = true
+    self:loadMeta()
+    self.cover_results = nil
+    self:freeCoverWidgets()
+    self.cover_rects = nil
+    self.view = "metadata"
+    Toast.show(message)
+    self:refresh()
+end
+
+function KoboldBookDetails:applyCover(cand)
+    local ok, err = require("kobold.data.cover_online").apply(self.file, cand.path)
+    if not ok then
+        logger.warn("KiKome: the cover could not be saved:", tostring(err))
+        Toast.error(_("The cover could not be saved."))
+        return
+    end
+    self:coverChanged(_("Cover changed."))
+end
+
+function KoboldBookDetails:askRevertCover()
+    require("kobold.ui.confirm_sheet").show{
+        title = _("Use the book's own cover?"),
+        message = _("The custom cover is removed and the cover of the book itself comes back."),
+        confirm_text = _("Use the book's cover"),
+        on_confirm = function()
+            if require("kobold.data.cover_online").revert(self.file) then
+                self:coverChanged(_("The book's own cover is back."))
+            else
+                Toast.error(_("The cover could not be changed."))
+            end
+        end,
+    }
+end
+
+function KoboldBookDetails:buildCover(level)
+    level = level or 1
+    local M = LEVELS[level]
+    local R = KoboldPopup.panelRect()
+    local border  = U(2)
+    local pad     = U(M.pad)
+    local radius  = U(22)   -- the sheet's corners
+    local inner_w = R.w - 2 * (border + pad)
+    local inner_h = R.h - 2 * (border + pad)
+    local x0, y0  = R.x + border + pad, R.y + border + pad
+    local top_h   = U(M.top)
+    local gap     = U(M.gap)
+    self.panel_rect = R
+    if not self.meta then self:loadMeta() end
+    local results = self.cover_results
+    local grey = Blitbuffer.Color8(0x77)
+
+    -- Only what was just drawn is kept: the pictures of the page before go.
+    if level == 1 then self:freeCoverWidgets() end
+
+    local rects = { cells = {} }
+    self.cover_rects = rects
+
+    -- Title bar: back and the name on the left, close on the right.
+    local close_d = U(36)
+    local back_button = pill(close_d, close_d, SOFT, OptionSheet.iconWidget("chevron-left", U(18), BLACK))
+    local close_button = pill(close_d, close_d, SOFT, KoboldWidgets.icon("close", U(16)))
+    local top_left = HorizontalGroup:new{
+        align = "center",
+        back_button,
+        HorizontalSpan:new{ width = U(12) },
+        TextWidget:new{ text = _("Choose cover"), face = KoboldWidgets.face(19), bold = true },
+    }
+    local top_right = close_button
+    rects.again = nil
+    if self.cover_results then
+        -- with covers on the screen: search again with other words
+        local again_button = pill(close_d, close_d, SOFT, OptionSheet.iconWidget("search", U(18), BLACK))
+        top_right = HorizontalGroup:new{
+            align = "center", again_button, HorizontalSpan:new{ width = U(10) }, close_button,
+        }
+        rects.again = Geom:new{
+            x = x0 + inner_w - 2 * close_d - U(10) - U(6), y = R.y,
+            w = close_d + U(10), h = top_h + pad,
+        }
+    end
+    local top_bar = OverlapGroup:new{
+        dimen = Geom:new{ w = inner_w, h = top_h },
+        LeftContainer:new{ dimen = Geom:new{ w = inner_w, h = top_h }, top_left },
+        RightContainer:new{ dimen = Geom:new{ w = inner_w, h = top_h }, top_right },
+    }
+    rects.back = Geom:new{
+        x = R.x, y = R.y, w = border + pad + close_d + U(12), h = top_h + pad + border,
+    }
+    self.close_rect = Geom:new{
+        x = x0 + inner_w - close_d - U(12), y = R.y,
+        w = close_d + U(12) + pad, h = top_h + pad,
+    }
+
+    local column = VerticalGroup:new{ align = "left", top_bar, VerticalSpan:new{ width = gap } }
+
+    if not results then
+        -- ── The two rows ──
+        local card_pad = U(M.card_pad)
+        local row_h    = math.floor(U(M.row) * 1.35)
+        local line_h   = U(1)
+        local card_w   = inner_w - 2 * card_pad
+        local actions = {
+            { id = "search", title = _("Search online"),
+              detail = _("Apple Books, Open Library, Amazon and Google Books") },
+            { id = "custom", title = _("Search with other words"),
+              detail = _("A title in another language, another author…") },
+            { id = "device", title = _("Choose from this device"),
+              detail = _("A JPG or PNG picture you already have") },
+        }
+        if self.meta.cover_custom then
+            actions[#actions + 1] = { id = "revert", title = _("Use the book's own cover"),
+                detail = _("Removes the custom cover") }
+        end
+        local card_h = #actions * row_h + (#actions - 1) * line_h + 2 * card_pad
+        local note = TextBoxWidget:new{
+            text = _("The cover you pick is saved for this book only. The book file is not changed."),
+            face = KoboldWidgets.face(12), width = inner_w, fgcolor = grey,
+        }
+        local used = top_h + gap + card_h + gap + note:getSize().h
+        if used > inner_h and level < #LEVELS then
+            note:free()
+            return self:buildCover(level + 1)
+        end
+        local card_y = y0 + top_h + gap
+        local list = VerticalGroup:new{ align = "left" }
+        for i, a in ipairs(actions) do
+            if i > 1 then
+                list[#list + 1] = LineWidget:new{ dimen = Geom:new{ w = card_w, h = line_h }, background = LINE }
+            end
+            list[#list + 1] = OverlapGroup:new{
+                dimen = Geom:new{ w = card_w, h = row_h },
+                LeftContainer:new{
+                    dimen = Geom:new{ w = card_w, h = row_h },
+                    VerticalGroup:new{
+                        align = "left",
+                        TextWidget:new{ text = a.title, face = KoboldWidgets.face(16), bold = true, max_width = card_w - U(40) },
+                        VerticalSpan:new{ width = U(2) },
+                        TextWidget:new{ text = a.detail, face = KoboldWidgets.face(12),
+                            fgcolor = KoboldWidgets.subtitleColor(), max_width = card_w - U(40) },
+                    },
+                },
+                RightContainer:new{
+                    dimen = Geom:new{ w = card_w, h = row_h },
+                    OptionSheet.iconWidget("chevron-right", U(16), KoboldWidgets.subtitleColor()),
+                },
+            }
+            rects[a.id] = Geom:new{
+                x = x0, y = card_y + card_pad + (i - 1) * (row_h + line_h), w = inner_w, h = row_h,
+            }
+        end
+        column[#column + 1] = FrameContainer:new{
+            bordersize = 0, padding = card_pad, radius = U(16), background = SOFT, list,
+        }
+        column[#column + 1] = VerticalSpan:new{ width = gap }
+        column[#column + 1] = note
+        column[#column + 1] = VerticalSpan:new{ width = math.max(0, inner_h - used) }
+    else
+        -- ── The grid ──
+        local ImageWidget = require("ui/widget/imagewidget")
+        local nav_h   = U(36)
+        local cols    = math.max(3, math.min(5, math.floor(inner_w / U(130))))
+        local gap_c   = U(10)
+        local cell_w  = math.floor((inner_w - (cols - 1) * gap_c) / cols)
+        local cap_h   = U(44)   -- source, then the size in pixels
+        local grid_h  = inner_h - top_h - gap - nav_h
+        local want_h  = math.floor(cell_w * 1.5)
+        local rows    = math.max(1, math.min(3, math.floor((grid_h + gap_c) / (want_h + cap_h + gap_c))))
+        local img_h   = math.min(want_h, math.floor((grid_h - rows * cap_h - (rows - 1) * gap_c) / rows))
+        img_h = math.max(U(60), img_h)
+        local row_h   = img_h + cap_h
+        local per_page = rows * cols
+        self.cover_per_page = per_page
+        local pages = math.max(1, math.ceil(#results / per_page))
+        local page = math.max(1, math.min(pages, self.cover_page or 1))
+        self.cover_page = page
+
+        local widgets = {}
+        self.cover_widgets = widgets
+        local grid = VerticalGroup:new{ align = "left" }
+        local first = (page - 1) * per_page + 1
+        local shown_rows = math.min(rows, math.ceil((#results - first + 1) / cols))
+        local grid_y = y0 + top_h + gap
+        for r = 1, shown_rows do
+            if r > 1 then grid[#grid + 1] = VerticalSpan:new{ width = gap_c } end
+            local line = HorizontalGroup:new{ align = "top" }
+            for c = 1, cols do
+                local idx = first + (r - 1) * cols + (c - 1)
+                local cand = results[idx]
+                if not cand then break end
+                if c > 1 then line[#line + 1] = HorizontalSpan:new{ width = gap_c } end
+                local ok_img, img = pcall(function()
+                    return ImageWidget:new{
+                        file = cand.path, width = cell_w, height = img_h,
+                        scale_factor = 0, file_do_cache = false,
+                    }
+                end)
+                local picture
+                if ok_img and img then
+                    widgets[#widgets + 1] = img
+                    picture = FrameContainer:new{ bordersize = U(1), color = LINE, padding = 0, margin = 0, img }
+                else
+                    picture = block(cell_w, img_h)
+                end
+                line[#line + 1] = CenterContainer:new{
+                    dimen = Geom:new{ w = cell_w, h = row_h },
+                    VerticalGroup:new{
+                        align = "center",
+                        CenterContainer:new{ dimen = Geom:new{ w = cell_w, h = img_h }, picture },
+                        VerticalSpan:new{ width = U(4) },
+                        CenterContainer:new{
+                            dimen = Geom:new{ w = cell_w, h = U(18) },
+                            TextWidget:new{ text = cand.label or "", face = KoboldWidgets.face(12), bold = true, max_width = cell_w },
+                        },
+                        CenterContainer:new{
+                            dimen = Geom:new{ w = cell_w, h = U(18) },
+                            TextWidget:new{
+                                text = string.format("%d × %d", cand.width or 0, cand.height or 0),
+                                face = KoboldWidgets.face(11), fgcolor = KoboldWidgets.subtitleColor(), max_width = cell_w,
+                            },
+                        },
+                    },
+                }
+                rects.cells[#rects.cells + 1] = {
+                    cand = cand,
+                    rect = Geom:new{
+                        x = x0 + (c - 1) * (cell_w + gap_c), y = grid_y + (r - 1) * (row_h + gap_c),
+                        w = cell_w, h = row_h,
+                    },
+                }
+            end
+            grid[#grid + 1] = line
+        end
+        local grid_used = shown_rows * row_h + math.max(0, shown_rows - 1) * gap_c
+        column[#column + 1] = grid
+        column[#column + 1] = VerticalSpan:new{ width = math.max(0, grid_h - grid_used) }
+
+        if pages > 1 then
+            local nav_y = y0 + inner_h - nav_h
+            local btn_w = U(60)
+            column[#column + 1] = OverlapGroup:new{
+                dimen = Geom:new{ w = inner_w, h = nav_h },
+                LeftContainer:new{
+                    dimen = Geom:new{ w = inner_w, h = nav_h },
+                    OptionSheet.iconWidget("chevron-left", U(18), page > 1 and BLACK or grey),
+                },
+                CenterContainer:new{
+                    dimen = Geom:new{ w = inner_w, h = nav_h },
+                    TextWidget:new{ text = page .. " / " .. pages, face = KoboldWidgets.face(15), bold = true },
+                },
+                RightContainer:new{
+                    dimen = Geom:new{ w = inner_w, h = nav_h },
+                    OptionSheet.iconWidget("chevron-right", U(18), page < pages and BLACK or grey),
+                },
+            }
+            rects.prev = Geom:new{ x = x0, y = nav_y, w = btn_w, h = nav_h }
+            rects.next = Geom:new{ x = x0 + inner_w - btn_w, y = nav_y, w = btn_w, h = nav_h }
+        else
+            column[#column + 1] = VerticalSpan:new{ width = nav_h }
+        end
+    end
+
+    local panel = FrameContainer:new{
+        bordersize = border, padding = pad, radius = radius, background = WHITE,
+        column,
+    }
+    return KoboldPopup.place(self.dimen, R.x, R.y, panel)
+end
+
+function KoboldBookDetails:onCoverTap(pos)
+    -- whatever goes wrong in here is logged and shown, never left to stop KOReader
+    local ok, err = pcall(self.coverTap, self, pos)
+    if not ok then
+        logger.warn("KiKome: a tap on the cover screen failed:", tostring(err))
+        self.cover_busy = false
+        Toast.error(_("Something went wrong with the covers."))
+    end
+end
+
+function KoboldBookDetails:coverTap(pos)
+    local r = self.cover_rects
+    if not r then return end
+    local function hit(rect) return rect and pos:intersectWith(rect) end
+    if self.cover_settle then return end
+    if self.cover_busy then
+        -- while it searches a tap anywhere cancels it (close also leaves). A
+        -- tap in the first moment is the one that started the search (or its
+        -- double): it does not count.
+        if hit(self.close_rect) then
+            self.cover_cancel = true
+            return self:dismiss()
+        end
+        if clock() - (self.cover_started or 0) < 1 then return end
+        return self:cancelCoverSearch()
+    end
+    if hit(self.close_rect) then return self:dismiss() end
+    if hit(r.back) then return self:closeCover() end
+    if self.cover_results then
+        if hit(r.again) then return self:askCoverQuery() end
+        if hit(r.prev) then return self:stepCoverPage(-1) end
+        if hit(r.next) then return self:stepCoverPage(1) end
+        for _i, cell in ipairs(r.cells) do
+            if hit(cell.rect) then return self:confirmCover(cell.cand) end
+        end
+        return
+    end
+    if hit(r.search) then return self:searchCovers() end
+    if hit(r.custom) then return self:askCoverQuery() end
+    if hit(r.device) then return self:pickLocalCover() end
+    if hit(r.revert) then return self:askRevertCover() end
+end
+
+-- ── Search online ──────────────────────────────────────────────────────────
+-- The last row under a field of Edit > Metadata. It asks the online sources
+-- about the book ONCE (Open Library, Apple Books, Google Books: see
+-- kobold/data/online_meta.lua) and keeps the answer for the book, so going to
+-- another field and tapping Search online there shows its list at once, with
+-- no new request. A list opens with what the sources found for that field;
+-- the pick goes into the editor and Save keeps it. "Search again" at the end
+-- of the list forgets the answer and asks again.
+
+-- The book as the sources are asked about it: what the metadata says now.
+function KoboldBookDetails:onlineBook()
+    local CoverOnline = require("kobold.data.cover_online")
+    local title = self:metaValue("title")
+    local isbn = self:metaValue("isbn") or CoverOnline.isbnFrom(self.meta.props.identifiers)
+    if isbn then isbn = (isbn:gsub("[%s%-]", "")) end
+    if isbn == "" then isbn = nil end
+    local author = self:metaValue("authors")
+    if author then author = author:match("([^\n]+)") end
+    return { file = self.file, title = title, author = author, isbn = isbn, language = self:metaValue("language") }
+end
+
+-- Tap on "Search online" in the editor of field `f` (st is the editor).
+function KoboldBookDetails:searchOnline(st, f)
+    if self.online_busy then return end
+    local OnlineMeta = require("kobold.data.online_meta")
+    local book = self:onlineBook()
+    if not book.title and not book.isbn then
+        Toast.error(_("The book needs a title to search online."))
+        return
+    end
+    local data = OnlineMeta.cached(book)
+    if data then return self:showOnline(st, f, book, data) end
+
+    local function run()
+        if self.closed or self.editor ~= st or self.online_busy then return end
+        self.online_busy = true
+        self.online_cancel = false
+        self.online_started = clock()
+        local working
+        local function progress(name)
+            Toast.dismiss(working)
+            working = Toast.working(string.format(_("Asking %s…"), name) .. "\n" .. _("Tap to cancel"), { timeout = 120 })
+        end
+        local co = coroutine.create(function() return OnlineMeta.collect(book, progress) end)
+        -- Taps made while it worked are still waiting to be delivered: for a
+        -- moment after the end they are ignored.
+        local function stop()
+            Toast.dismiss(working)
+            self.online_busy = false
+            self.online_settle = true
+            UIManager:scheduleIn(0.7, function() self.online_settle = false end)
+        end
+        local function finish(result, err)
+            stop()
+            if self.closed or self.editor ~= st then return end
+            if err or not result then
+                logger.warn("KiKome: the online search failed:", tostring(err))
+                Toast.error(_("The search failed. Check the connection and try again."))
+                return
+            end
+            if (result.answered or 0) == 0 then
+                -- nobody answered: it is not kept, the next tap asks again
+                local msg = _("The search failed. Check the connection and try again.")
+                local failed = OnlineMeta.failedLine(result)
+                if failed ~= "" then msg = msg .. "\n" .. string.format(_("Failed: %s"), failed) end
+                Toast.show(msg, { timeout = 7 })
+                return
+            end
+            OnlineMeta.store(book, result)
+            self:showOnline(st, f, book, result)
+        end
+        local function tick()
+            if self.closed or self.editor ~= st then
+                Toast.dismiss(working)
+                self.online_busy = false
+                return
+            end
+            if self.online_cancel then return stop() end
+            local ok, a = coroutine.resume(co)
+            if not ok then return finish(nil, a) end
+            if coroutine.status(co) == "dead" then return finish(a) end
+            UIManager:scheduleIn(0.05, tick)
+        end
+        tick()
+    end
+
+    local ok_nm, NetworkMgr = pcall(require, "ui/network/manager")
+    if ok_nm and NetworkMgr and NetworkMgr.runWhenOnline then
+        NetworkMgr:runWhenOnline(run)
+    else
+        run()
+    end
+end
+
+-- What the editor does with the values picked in the list.
+function KoboldBookDetails:applyOnline(st, f, picked)
+    if #picked == 0 then return end
+    if f.key == "authors" then
+        -- after the ones already written, none twice
+        local have = {}
+        for l in (st.value .. "\n"):gmatch("(.-)\n") do have[trim(l):lower()] = true end
+        local value = (st.value:gsub("%s+$", ""))
+        for _i, name in ipairs(picked) do
+            if not have[name:lower()] then
+                local joined = value .. ((value == "") and "" or "\n") .. name
+                if ulen(joined) <= st.max then
+                    value = joined
+                    have[name:lower()] = true
+                end
+            end
+        end
+        st.value, st.pos = value, #value
+    elseif st.chips then
+        -- keywords: what was being typed becomes a pill, then every pick
+        commitChip(st)
+        for _i, word in ipairs(picked) do
+            st.value = word
+            commitChip(st)
+        end
+    else
+        local value = cutChars(picked[1], st.max)
+        st.value, st.pos = value, #value
+    end
+end
+
+-- The list of what the sources found for field `f`.
+function KoboldBookDetails:showOnline(st, f, book, data)
+    local OnlineMeta = require("kobold.data.online_meta")
+    local items = OnlineMeta.values(data, f.key)
+    local failed = OnlineMeta.failedLine(data)
+    if #items == 0 then
+        local msg = string.format(_("Nothing found online for %s."), f.label)
+        if failed ~= "" then msg = msg .. "\n" .. string.format(_("Failed: %s"), failed) end
+        Toast.show(msg, { timeout = 6 })
+        return
+    end
+    -- several can be picked for the authors and the keywords; any other field
+    -- takes one
+    local multi = (f.key == "authors" or f.key == "keywords")
+    local want, one = {}, nil
+    local function count()
+        local n = 0
+        for _k, on in pairs(want) do if on then n = n + 1 end end
+        return n
+    end
+    local function rowText(it)
+        if f.key ~= "description" then return it.value end
+        local short, cut = cutChars((it.value:gsub("%s+", " ")), 90)
+        return cut and (short .. "…") or short
+    end
+    local function rowSub(it)
+        local line = OnlineMeta.sourcesLine(it)
+        if f.key == "description" then
+            line = line .. "  ·  " .. string.format(_("%d characters"), ulen(it.value))
+        end
+        return line
+    end
+    ListPicker.show{
+        title = f.label,
+        action_label = multi and _("Add") or _("Use"),
+        empty_text = string.format(_("Nothing found online for %s."), f.label),
+        subtitle = _("Found online") .. ((book.title and book.title ~= "") and ("  ·  " .. book.title) or ""),
+        rows = function()
+            local rows = {}
+            for _i, it in ipairs(items) do
+                rows[#rows + 1] = {
+                    id = it.value, icon = "book-open-text", text = rowText(it), sub = rowSub(it),
+                    marker = "tick", selected = multi and (want[it.value] == true) or (one == it.value),
+                }
+            end
+            rows[#rows + 1] = { id = "__again", icon = "refresh-cw", text = _("Search again"), marker = "chevron" }
+            return rows
+        end,
+        count = multi and count or nil,
+        can_finish = function()
+            if multi then return count() > 0 end
+            return one ~= nil
+        end,
+        on_tap = function(row, picker)
+            if row.id == "__again" then
+                picker:dismiss()
+                OnlineMeta.forget(book)
+                UIManager:nextTick(function() self:searchOnline(st, f) end)
+                return
+            end
+            if multi then
+                want[row.id] = not want[row.id]
+            else
+                one = row.id
+            end
+            picker:reload()
+        end,
+        on_finish = function()
+            if self.closed or self.editor ~= st then return end
+            local picked = {}
+            if multi then
+                for _i, it in ipairs(items) do
+                    if want[it.value] then picked[#picked + 1] = it.value end
+                end
+            elseif one then
+                picked[1] = one
+            end
+            self:applyOnline(st, f, picked)
+            self:refresh(self:editorRegion())
+        end,
+    }
+    if failed ~= "" and not data.failed_shown then
+        data.failed_shown = true
+        Toast.show(string.format(_("Some sources failed: %s"), failed), { timeout = 6 })
+    end
 end
 
 -- One field in the text editor. The series goes with its number: a second,
@@ -2227,8 +3281,7 @@ end
 function KoboldBookDetails:editField(f)
     local file = self.file
     if f.key == "cover" then
-        Toast.show(_("Coming soon."))   -- the cover options come with the next step
-        return
+        return self:openCover()
     end
     local current = self:metaValue(f.key)
     if current and f.key == "description" then current = plainText(current) end
@@ -2245,6 +3298,12 @@ function KoboldBookDetails:editField(f)
         known, known_title = Metadata.knownKeywords(), _("Keywords in your library")
     elseif f.key == "authors" then
         known, known_title = Metadata.knownAuthors(), _("Authors in your library")
+    elseif f.key == "publisher" then
+        -- the cover browser does not keep publishers: they come from the EPUBs
+        -- themselves, read in the background (see kobold/data/publishers.lua)
+        local Publishers = require("kobold.data.publishers")
+        Publishers.ensureScan()
+        known, known_title = Publishers.known(), _("Publishers in your library")
     end
     -- A line under the field. For the series: how many books the one typed has
     -- in the library (counted once for each name that is typed).
@@ -2266,6 +3325,8 @@ function KoboldBookDetails:editField(f)
         heading = f.label,
         chips = f.chips and splitKeywordList(current) or nil,
         lowercase = f.lowercase,
+        -- the last row of the list: what the online sources say about this field
+        online = ONLINE_KEYS[f.key] and function(st) self:searchOnline(st, f) end or nil,
         suggest_title = known_title,
         hint = hint,
         -- the series' number: nothing is filled in, a book can be any of them
@@ -2301,6 +3362,10 @@ function KoboldBookDetails:editField(f)
                 return out
             end
             if not (st and st.chips) and trim(query) == trim(current or "") then query = "" end
+            if f.key == "publisher" then
+                -- the scan goes on while the editor is open: ask again
+                known = require("kobold.data.publishers").known()
+            end
             local list = Metadata.matchList(known, query)
             if st and st.chips then
                 -- the keywords already added are not offered again
@@ -2319,6 +3384,29 @@ function KoboldBookDetails:editField(f)
         save = function(text, number)
             if is_series then return self:saveSeries(text, number or "") end
             if f.key == "authors" then text = cleanLines(text) end
+            if f.key == "year" and text ~= "" and not text:match("^%d%d%d%d$") then
+                Toast.error(_("The year must have four digits."))
+                return false
+            end
+            if f.key == "isbn" and text ~= "" then
+                local clean = text:gsub("[%s%-]", ""):upper()
+                if not (clean:match("^97[89]%d%d%d%d%d%d%d%d%d%d$") or clean:match("^%d%d%d%d%d%d%d%d%d[%dX]$")) then
+                    Toast.error(_("The ISBN must have 10 or 13 digits."))
+                    return false
+                end
+                text = clean
+            end
+            if f.key == "pages" and text ~= "" then
+                local n = tonumber((text:gsub("[%s%.,]", "")))
+                if not (n and n >= 1 and n <= 99999 and n == math.floor(n)) then
+                    Toast.error(_("The pages must be a whole number between 1 and 99999."))
+                    return false
+                end
+                text = tostring(math.floor(n))
+            end
+            if text == "" and (f.key == "keywords" or f.key == "description" or MORE_KEYS[f.key]) then
+                return self:saveBlankField(f.key)
+            end
             if text == "" then
                 -- empty puts the book's own value back (what KOReader does too)
                 if not customized then return true end
@@ -2354,29 +3442,68 @@ function KoboldBookDetails:editField(f)
     }
 end
 
--- The series and its number, saved together. An empty name puts the book's own
--- series back; an empty number puts its own number back.
+-- Keywords and description saved with no text: they stay EMPTY (the book's own
+-- value is not shown again), the same as a series with no name. "Restore
+-- original" in the editor brings the book's own value back.
+function KoboldBookDetails:saveBlankField(key)
+    local file = self.file
+    local custom = self.meta.custom
+    local own
+    if MORE_KEYS[key] then
+        own = self:extraOriginals()[key]
+    else
+        own = (custom[key] ~= nil) and self.meta.originals[key] or self.meta.props[key]
+    end
+    if type(own) == "table" then own = table.concat(own, ",") end
+    own = tostring(own or "")
+    local ok
+    if own:match("%S") then
+        ok = Metadata.setMany(file, { [key] = Metadata.BLANK }, self.meta.props)
+    elseif custom[key] == nil then
+        return true   -- the book has none and nothing was corrected: nothing to change
+    else
+        -- the book has none: there is nothing to hide, the correction just goes
+        ok = Metadata.restore(file, key)
+    end
+    if not ok then
+        Toast.error(_("The metadata could not be saved."))
+        return false
+    end
+    self:metaSaved()
+    return true
+end
+
+-- The series and its number, saved together. An empty name leaves the book
+-- WITHOUT a series (even when the book itself says it is in one); an empty
+-- number puts the book's own number back. "Restore original" in the editor
+-- brings the book's own series back.
 function KoboldBookDetails:saveSeries(name, number)
     local file = self.file
     local custom = self.meta.custom
     number = (number:gsub(",", "."))   -- a comma is a point
-    if number ~= "" and not tonumber(number) then
+    if name ~= "" and number ~= "" and not tonumber(number) then
         Toast.error(_("The series number must be a number."))
         return false
     end
-    -- the number belongs to a series: the one typed, or else the book's own
-    local own = (custom.series ~= nil) and self.meta.originals.series or self.meta.props.series
-    if number ~= "" and name == "" and not (own and own ~= "") then
-        Toast.error(_("Write the series first: the number belongs to it."))
-        return false
+    local ok
+    if name == "" then
+        -- the number belongs to the series: with no series it is ignored
+        local own = (custom.series ~= nil) and self.meta.originals.series or self.meta.props.series
+        if own and own ~= "" then
+            ok = Metadata.setMany(file, { series = Metadata.BLANK, series_index = Metadata.BLANK }, self.meta.props)
+        else
+            -- the book has no series: there is nothing to hide, a correction just goes
+            ok = Metadata.setMany(file, { series = "", series_index = "" }, self.meta.props)
+        end
+    else
+        ok = Metadata.setMany(file, { series = name, series_index = number }, self.meta.props)
     end
-    if not Metadata.setMany(file, { series = name, series_index = number }, self.meta.props) then
+    if not ok then
         Toast.error(_("The metadata could not be saved."))
         return false
     end
     local restored = {}
-    if name == "" and custom.series ~= nil then restored[#restored + 1] = "series" end
-    if number == "" and custom.series_index ~= nil then restored[#restored + 1] = "series_index" end
+    if name ~= "" and number == "" and custom.series_index ~= nil then restored[#restored + 1] = "series_index" end
     self:metaSaved(#restored > 0 and restored or nil)
     return true
 end
@@ -2407,8 +3534,12 @@ function KoboldBookDetails:writeMetaToBook()
     end
     local labels = {}
     for _i, key in ipairs(keys) do
-        for _j, f in ipairs(META_FIELDS) do
-            if f.key == key then labels[#labels + 1] = f.label end
+        if key == "cover" then
+            labels[#labels + 1] = _("Cover")
+        else
+            for _j, f in ipairs(META_FIELDS) do
+                if f.key == key then labels[#labels + 1] = f.label end
+            end
         end
     end
     local name = file:match("([^/]+)$") or file
@@ -2421,7 +3552,7 @@ function KoboldBookDetails:writeMetaToBook()
     }
     if self.meta.cover_custom then
         lines[#lines + 1] = ""
-        lines[#lines + 1] = _("The cover is not written.")
+        lines[#lines + 1] = _("The custom cover replaces the picture of the book's own cover, and is not kept apart any more.")
     end
     require("kobold.ui.confirm_sheet").show{
         title = _("Write to the book file"),
@@ -2454,6 +3585,8 @@ function KoboldBookDetails:doWriteMeta(keep_backup)
         if v ~= nil and v ~= "" then self.meta_restored[f.key] = v end
     end
     Metadata.invalidate(file)
+    -- the cover browser reads the book again (its cover too)
+    pcall(function() require("kobold.data.covers").refreshBook(file) end)
     self.meta_changed = true
     self.changed = true
     self:loadMeta()
@@ -2465,13 +3598,22 @@ function KoboldBookDetails:restoreAllMeta()
     local file = self.file
     require("kobold.ui.confirm_sheet").show{
         title = _("Restore original metadata"),
-        message = _("The title, authors, series (and its number), language, keywords and description go back to what the book itself says."),
+        message = self.meta.cover_custom
+            and _("The title, authors, series (and its number), language, keywords, description, publisher, year, ISBN, pages and cover go back to what the book itself says.")
+            or _("The title, authors, series (and its number), language, keywords, description, publisher, year, ISBN and pages go back to what the book itself says."),
         confirm_text = _("Restore"),
         on_confirm = function()
             if self.closed or self.view ~= "metadata" then return end
             if not Metadata.restoreAll(file) then
                 Toast.error(_("The metadata could not be saved."))
                 return
+            end
+            if self.meta.cover_custom then
+                -- the custom cover goes too: the book's own comes back
+                if not require("kobold.data.cover_online").revert(file) then
+                    Toast.error(_("The cover could not be changed."))
+                end
+                pcall(function() require("kobold.data.covers").refreshBook(file) end)
             end
             for _i, f in ipairs(META_FIELDS) do
                 if self.meta.custom[f.key] ~= nil then
@@ -2482,6 +3624,7 @@ function KoboldBookDetails:restoreAllMeta()
             self.meta_changed = true
             self.changed = true
             self:loadMeta()
+            pcall(function() require("kobold.data.publishers").update(file) end)
             self:refresh()
         end,
     }
@@ -2496,7 +3639,13 @@ function KoboldBookDetails:onMetadataTap(pos)
     if hit(r.write) then return self:writeMetaToBook() end
     if hit(r.restore) then return self:restoreAllMeta() end
     for _i, row in ipairs(r.rows) do
-        if hit(row.rect) then return self:editField(row.field) end
+        if hit(row.rect) then
+            if row.field.key == "more" then
+                self.meta_more = true
+                return self:refresh()
+            end
+            return self:editField(row.field)
+        end
     end
 end
 
@@ -3520,6 +4669,9 @@ function KoboldBookDetails:onDetailsSwipe(ges)
     if self.view == "annotations" then
         if dir == "west" then self:stepAnnotationPage(1) return true end
         if dir == "east" then self:stepAnnotationPage(-1) return true end
+    elseif self.view == "cover" then
+        if dir == "west" then self:stepCoverPage(1) return true end
+        if dir == "east" then self:stepCoverPage(-1) return true end
     elseif self.view == "settings" then
         if dir == "west" then self:stepSettingsPage(1) return true end
         if dir == "east" then self:stepSettingsPage(-1) return true end
@@ -3547,7 +4699,9 @@ function KoboldBookDetails:build(level)
     if self.view == "annotation" then return self:buildAnnotation(level) end
     if self.view == "annotations" then return self:buildAnnotations(level) end
     if self.view == "metadata" then return self:buildMetadata(level) end
+    if self.view == "cover" then return self:buildCover(level) end
     if self.view == "settings" then return self:buildSettings(level) end
+    if self.view == "stable" then return self:buildStable(level) end
     if self.view == "edit" then return self:buildEdit(level) end
     return self:buildDetails(level)
 end
@@ -3726,7 +4880,7 @@ function KoboldBookDetails:buildSettings(level)
                 OptionSheet.iconWidget(row.icon, U(18), BLACK),
                 HorizontalSpan:new{ width = U(12) },
                 TextWidget:new{
-                    text = row.text, face = KoboldWidgets.face(17),
+                    text = self:settingsRowText(row), face = KoboldWidgets.face(17),
                     max_width = card_w - U(18) - U(12),
                 },
             },
@@ -3827,6 +4981,16 @@ function KoboldBookDetails:buildSettings(level)
     return KoboldPopup.place(self.dimen, R.x, R.y, panel)
 end
 
+-- The name of a row of Book settings. Stable pages carries the page count put
+-- in Metadata, so the number it works from is in front of the user.
+function KoboldBookDetails:settingsRowText(row)
+    if row.id == "stable" then
+        local ok, n = pcall(function() return require("kobold.data.stable_pages").pagesOf(self.file) end)
+        if ok and n then return string.format(_("Stable pages (%d pages)"), n) end
+    end
+    return row.text
+end
+
 function KoboldBookDetails:openSettings()
     self.set_page = 1
     self.plugin_buttons = FDButtons.collect(self.file)
@@ -3883,7 +5047,225 @@ function KoboldBookDetails:runSettingsAction(id)
         FileActions.refreshMetadata(file, function()
             self.changed, self.meta_changed = true, true
         end)
+    elseif id == "stable" then
+        self:openStable()
     end
+end
+
+-- ── Stable pages ───────────────────────────────────────────────────────────
+-- A card of three rows inside Book settings (kobold/data/stable_pages.lua), the same
+-- three choices as Settings > Books > Stable pages:
+--   Off                          stable pages off for this book
+--   Use KOReader's numbering     the numbers are KOReader's own (its count, or the publisher's)
+--   Use metadata page count      the numbers come from the Pages of Metadata (they also replace
+--                                the publisher's page numbers, if the book has them); a book
+--                                with no Pages uses KOReader's numbering
+-- The dot (square-dot) marks the choice made for this book alone, which wins over Settings.
+-- With no dot the three squares are empty and the row in bold is the one the book follows
+-- from Settings. A tap on a row gives it the dot; a tap on the row with the dot takes it
+-- away. Every tap is kept at once, for this book, and, with the book open (parked too),
+-- applied at once; a book that is closed gets it when it opens.
+function KoboldBookDetails:buildStable(level)
+    level = level or 1
+    local M = LEVELS[level]
+    local R = KoboldPopup.panelRect()
+    local border  = U(2)
+    local pad     = U(M.pad)
+    local radius  = U(22)   -- the sheet's corners
+    local inner_w = R.w - 2 * (border + pad)
+    local inner_h = R.h - 2 * (border + pad)
+    local x0, y0  = R.x + border + pad, R.y + border + pad
+    local top_h   = U(M.top)
+    local gap     = U(M.gap)
+    self.panel_rect = R
+
+    -- `own` has the dot (the choice of this book alone); `effective` is in bold (what the book
+    -- follows: its own choice, or else the setting)
+    local effective, own = self.sp_effective or "off", self.sp_own
+    local pages = self.sp_pages
+    local grey = Blitbuffer.Color8(0x99)
+    -- the number goes in the name; the text under it is short, so that it is not cut
+    local rows = {
+        { id = "off", title = _("Off"),
+          detail = _("Pages change with the font size") },
+        { id = "koreader", title = _("Use KOReader's numbering"),
+          detail = _("Its own count, or the publisher's if the book has them") },
+        { id = "metadata",
+          title = pages and string.format(_("Use metadata page count: %d"), pages) or _("Use metadata page count"),
+          detail = pages and _("Replaces the publisher's page numbers, if the book has them.")
+              or _("No Pages in Metadata: KOReader's numbering is used") },
+    }
+    for _i, row in ipairs(rows) do
+        row.selected = (own == row.id)
+        row.bold = (effective == row.id)
+    end
+    local row_h    = math.floor(U(M.row) * 1.35)
+    local line_h   = U(1)
+    local card_pad = U(M.card_pad)
+    local card_w   = inner_w - 2 * card_pad
+    local card_h   = #rows * row_h + (#rows - 1) * line_h + 2 * card_pad
+    local used     = top_h + gap + card_h
+    if used > inner_h and level < #LEVELS then return self:buildStable(level + 1) end
+    local card_y   = y0 + top_h + gap
+    local rects    = { rows = {} }
+    self.sp_rects  = rects
+
+    -- Title bar: back on the left with the title, close on the right.
+    local close_d = U(36)
+    local back_button = pill(close_d, close_d, SOFT, OptionSheet.iconWidget("chevron-left", U(18), BLACK))
+    local close_button = pill(close_d, close_d, SOFT, KoboldWidgets.icon("close", U(16)))
+    local top_left = HorizontalGroup:new{
+        align = "center",
+        back_button,
+        HorizontalSpan:new{ width = U(12) },
+        TextWidget:new{
+            text = self:settingsRowText({ id = "stable", text = _("Stable pages") }),
+            face = KoboldWidgets.face(19), bold = true, max_width = inner_w - close_d * 2 - U(40),
+        },
+    }
+    local top_bar = OverlapGroup:new{
+        dimen = Geom:new{ w = inner_w, h = top_h },
+        LeftContainer:new{ dimen = Geom:new{ w = inner_w, h = top_h }, top_left },
+        RightContainer:new{ dimen = Geom:new{ w = inner_w, h = top_h }, close_button },
+    }
+    rects.back = Geom:new{
+        x = R.x, y = R.y, w = border + pad + close_d + U(12), h = top_h + pad + border,
+    }
+    self.close_rect = Geom:new{
+        x = x0 + inner_w - close_d - U(12), y = R.y,
+        w = close_d + U(12) + pad, h = top_h + pad,
+    }
+
+    local Font = require("ui/font")
+    local list = VerticalGroup:new{ align = "left" }
+    for i, row in ipairs(rows) do
+        if i > 1 then
+            list[#list + 1] = LineWidget:new{ dimen = Geom:new{ w = card_w, h = line_h }, background = LINE }
+        end
+        local right = OptionSheet.iconWidget(row.selected and "square-dot" or "square", U(20), BLACK)
+        list[#list + 1] = OverlapGroup:new{
+            dimen = Geom:new{ w = card_w, h = row_h },
+            LeftContainer:new{
+                dimen = Geom:new{ w = card_w, h = row_h },
+                VerticalGroup:new{
+                    align = "left",
+                    TextWidget:new{
+                        text = row.title, face = KoboldWidgets.face(16), bold = row.bold == true,
+                        fgcolor = row.locked and grey or BLACK, max_width = card_w - U(48),
+                    },
+                    VerticalSpan:new{ width = U(2) },
+                    TextWidget:new{
+                        text = row.detail, face = KoboldWidgets.face(12),
+                        fgcolor = row.locked and grey or KoboldWidgets.subtitleColor(), max_width = card_w - U(48),
+                    },
+                },
+            },
+            RightContainer:new{ dimen = Geom:new{ w = card_w, h = row_h }, right },
+        }
+        rects.rows[i] = {
+            id = row.id, locked = row.locked,
+            rect = Geom:new{ x = x0, y = card_y + card_pad + (i - 1) * (row_h + line_h), w = inner_w, h = row_h },
+        }
+    end
+    local card = FrameContainer:new{
+        bordersize = 0, padding = card_pad, radius = U(16), background = SOFT,
+        list,
+    }
+    local column = VerticalGroup:new{
+        align = "left",
+        top_bar,
+        VerticalSpan:new{ width = gap },
+        card,
+        -- the sheet keeps its size, whatever the rows take
+        VerticalSpan:new{ width = math.max(0, inner_h - used) },
+    }
+    local panel = FrameContainer:new{
+        bordersize = border, padding = pad, radius = radius, background = WHITE,
+        column,
+    }
+    return KoboldPopup.place(self.dimen, R.x, R.y, panel)
+end
+
+function KoboldBookDetails:openStable()
+    local StablePages = require("kobold.data.stable_pages")
+    self.sp_pages = StablePages.pagesOf(self.file)
+    self.sp_effective, self.sp_own = StablePages.choice(self.file)
+    self.view = "stable"
+    self:refresh()
+end
+
+function KoboldBookDetails:closeStable()
+    self.view = "settings"
+    self.sp_rects = nil
+    self:refresh()
+end
+
+function KoboldBookDetails:onStableTap(pos)
+    local r = self.sp_rects
+    if not r then return end
+    local function hit(rect) return rect and pos:intersectWith(rect) end
+    if hit(self.close_rect) then return self:dismiss() end
+    if hit(r.back) then return self:closeStable() end
+    for _i, row in ipairs(r.rows) do
+        if hit(row.rect) then
+            if not row.locked then self:stableChoose(row.id) end
+            return
+        end
+    end
+end
+
+-- A tap on one of the three rows: it is kept for the book and applied now if the book is open.
+function KoboldBookDetails:stableChoose(id)
+    local StablePages = require("kobold.data.stable_pages")
+    local file = self.file
+    if id ~= "off" and id ~= "koreader" and id ~= "metadata" then return end
+    -- a tap on the row that has the dot takes this book's own choice away: it follows Settings again
+    local saved
+    if id == self.sp_own then saved = StablePages.clearMode(file) else saved = StablePages.setMode(file, id) end
+    if not saved then
+        Toast.error(_("The setting could not be saved."))
+        return
+    end
+    self.sp_effective, self.sp_own = StablePages.choice(file)
+    self:refresh()
+    local ui = StablePages.liveUi(file)
+    if not ui then
+        Toast.show(_("Saved. The stable pages are set when the book opens."), { timeout = 4 })
+        return
+    end
+    -- open (or parked): the pages are made now, not at the next opening
+    local ok, status, size = pcall(function() return StablePages.apply(ui, { force = true }) end)
+    if ok and status == "koreader_later" then
+        local Park = require("kobold.ui.park")
+        if Park.isParked() and Park.parkedFile() == file then
+            -- KOReader's own numbering is only built when a book loads, and a parked
+            -- book does not load again: it closes for real, so that the next opening is fresh
+            local Transition = require("kobold.ui.transition")
+            pcall(function() Transition.show(_("Closing")) end)
+            UIManager:nextTick(function()
+                Park.finish("stable pages")
+                Transition.close()
+                Toast.show(_("The book was closed. It opens with KOReader's numbering."), { timeout = 5 })
+            end)
+            return
+        end
+    end
+    if ok then
+        StablePages.announce(ui, status, size, true)
+    else
+        logger.warn("KiKome: stable pages failed:", tostring(status))
+        Toast.error(_("The stable pages could not be set."))
+    end
+end
+
+-- The page count of Metadata changed: a book that is open (parked under KiKome
+-- too, where it would not load again) gets its stable pages at once.
+function KoboldBookDetails:applyStablePages()
+    local StablePages = require("kobold.data.stable_pages")
+    local ui = StablePages.liveUi(self.file)
+    if not ui then return end
+    local status, size, _c, changed = StablePages.apply(ui)
+    if changed then StablePages.announce(ui, status, size) end
 end
 
 -- A button another plugin added to KOReader's file dialog. With a book parked
@@ -4251,6 +5633,7 @@ function KoboldBookDetails:init()
     KoboldTaps.add(self, "KoboldDetailsTap", 0, 0, W, H, function(ges)
         local pos = ges.pos
         if self.opening then return end   -- the book is opening: taps wait
+        require("kobold.data.publishers").touch()   -- a background scan waits while this is used
         if self.view == "editor" then
             self:onEditorTap(pos)
         elseif self.view == "annotation" then
@@ -4259,8 +5642,12 @@ function KoboldBookDetails:init()
             self:onAnnotationsTap(pos)
         elseif self.view == "metadata" then
             self:onMetadataTap(pos)
+        elseif self.view == "cover" then
+            self:onCoverTap(pos)
         elseif self.view == "settings" then
             self:onSettingsTap(pos)
+        elseif self.view == "stable" then
+            self:onStableTap(pos)
         elseif self.view == "edit" then
             self:onEditTap(pos)
         elseif pos:intersectWith(self.close_rect) then
@@ -4340,6 +5727,7 @@ end
 function KoboldBookDetails:onKoboldAnnNext()
     if self.opening then return false end
     if self.view == "settings" then self:stepSettingsPage(1) return true end
+    if self.view == "cover" then self:stepCoverPage(1) return true end
     if self.view == "annotations" then self:stepAnnotationPage(1) return true end
     if self.view == "annotation" then self:stepAnnotation(1) return true end
     return false
@@ -4348,9 +5736,19 @@ end
 function KoboldBookDetails:onKoboldAnnPrev()
     if self.opening then return false end
     if self.view == "settings" then self:stepSettingsPage(-1) return true end
+    if self.view == "cover" then self:stepCoverPage(-1) return true end
     if self.view == "annotations" then self:stepAnnotationPage(-1) return true end
     if self.view == "annotation" then self:stepAnnotation(-1) return true end
     return false
+end
+
+-- True when `rect` reaches outside the sheet (the sheet is inset from the
+-- screen edges; the keyboard is not: it runs edge to edge).
+function KoboldBookDetails:outsidePanel(rect)
+    local R = self.panel_rect
+    if not (R and rect) then return false end
+    return rect.x < R.x or rect.y < R.y
+        or rect.x + rect.w > R.x + R.w or rect.y + rect.h > R.y + R.h
 end
 
 -- Draws the sheet again. With `rect` (a Geom), only that part of the screen
@@ -4358,17 +5756,36 @@ end
 function KoboldBookDetails:refresh(rect)
     if self.closed then return end
     self[1] = self:build()
+    if rect and self:outsidePanel(rect) then
+        -- The keyboard was drawn over the screen around the sheet (the strips
+        -- at the sides and at the bottom). When it goes away, only this page
+        -- is painted again, and that strip is not part of it, so the keys
+        -- stayed there as leftovers on the e-ink panel. Everything under the
+        -- page is painted again in that area too.
+        UIManager:setDirty("all", "ui", rect)
+        return
+    end
     UIManager:setDirty(self, function() return "ui", rect or self.panel_rect end)
 end
 
 function KoboldBookDetails:dismiss()
+    -- With the keyboard up the page covers the whole width below the sheet's
+    -- top: that is the area to clean, not only the sheet.
+    local region = self.panel_rect
+    if self.view == "editor" then
+        region = self:editorRegion()
+    end
     if self.kb then
         self.kb:free()
         self.kb = nil
     end
     self.closed = true
+    self:freeCoverWidgets()
+    if self.cover_searched then
+        pcall(function() require("kobold.data.cover_online").cleanup() end)
+    end
     self:notifyChange()
-    UIManager:close(self, "ui", self.panel_rect)
+    UIManager:close(self, "ui", region)
     return true
 end
 
@@ -4387,8 +5804,16 @@ function KoboldBookDetails:onClose()
         self:closeAnnotations()
         return true
     end
+    if self.view == "cover" then
+        self:closeCover()
+        return true
+    end
     if self.view == "metadata" then
         self:closeMetadata()
+        return true
+    end
+    if self.view == "stable" then
+        self:closeStable()
         return true
     end
     if self.view == "settings" then

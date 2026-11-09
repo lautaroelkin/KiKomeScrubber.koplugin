@@ -10,6 +10,7 @@
 --
 -- Item format (the only one this file uses):
 --   { section = "General" }                        a small gray heading
+--   { kind = "note", text = "..." }                a short gray explanation (2 lines at most), not tappable
 --   {
 --     text     = "Battery",                       row label
 --     icon     = "grid.svg",                      string, or a list of names to try in order
@@ -28,7 +29,7 @@
 --   }
 -- Pages: "root" (the main screen), "general" (opening panel, corners, outline,
 -- shelves and the status bar), "advanced" and one choice page per setting
--- (battery, clock_layout, clock_date_format, clock_pattern, library_list_rows, library_grid_rows), "library", "library_tabs"
+-- (battery, stable_pages, clock_layout, clock_date_format, clock_pattern, library_list_rows, library_grid_rows), "library", "library_tabs"
 -- (the Library's tabs: order and on / off) and "library_tab:collections".
 -- Everything stays inside this window; no KOReader menus.
 
@@ -48,6 +49,7 @@ local LeftContainer   = require("ui/widget/container/leftcontainer")
 local LineWidget      = require("ui/widget/linewidget")
 local OverlapGroup    = require("ui/widget/overlapgroup")
 local RightContainer  = require("ui/widget/container/rightcontainer")
+local TextBoxWidget   = require("ui/widget/textboxwidget")
 local TextWidget      = require("ui/widget/textwidget")
 local UIManager       = require("ui/uimanager")
 local VerticalGroup   = require("ui/widget/verticalgroup")
@@ -68,6 +70,7 @@ local KoboldWidgets   = require("kobold.ui.widgets")
 local Screen = Device.screen
 
 local BATTERY_LABELS = { fill = _("Fill"), percent = _("Percentage") }
+local STABLE_LABELS  = { off = _("Off"), koreader = _("KOReader"), metadata = _("Metadata") }
 
 local KoboldSettings = InputContainer:extend{
     -- Not modal: its editors and the stats popup open on top of it.
@@ -333,6 +336,12 @@ function KoboldSettings:getPageDefinition(page_id)
                     text = _("Cover outline"), icon = "image.svg", kind = "toggle",
                     setting = "cover_outline", default = true,
                     desc = _("A thin grey line around every cover, on Home and in the library, in grid and list. Off: covers with no outline."),
+                },
+                { section = _("Books") },
+                {
+                    text = _("Stable pages"), icon = "book-open-text.svg", kind = "submenu", target = "stable_pages",
+                    value = STABLE_LABELS[require("kobold.data.stable_pages").globalMode()] or STABLE_LABELS.off,
+                    desc = _("Off: stable pages off in every book. KOReader numbering: every book shows stable pages, with KOReader's own count. Metadata page count: books with Pages in Metadata > More details use that number, the others use KOReader's. With no choice made, KiKome follows KOReader's own setting. A book can have its own choice."),
                 },
                 { section = _("Status bar") },
                 {
@@ -685,6 +694,46 @@ function KoboldSettings:getPageDefinition(page_id)
             }
         end
         return { title = _("Custom pattern"), items = items }
+    elseif page_id == "stable_pages" then
+        local SP = require("kobold.data.stable_pages")
+        local own, effective = SP.ownChoice(), SP.globalMode()
+        local function finish(save)
+            save()
+            -- the book that is open (parked under KiKome) does not load again: it gets it now
+            pcall(function() SP.applyOpen() end)
+            done()
+        end
+        local function pick(id)
+            -- a tap on the option with the dot takes the choice away: KiKome follows KOReader's switch again
+            if id == own then return finish(function() SP.clearGlobalMode() end) end
+            -- from "no stable pages" to some, every book is numbered differently: say so first
+            if effective ~= "off" or id == "off" then
+                return finish(function() SP.setGlobalMode(id) end)
+            end
+            require("kobold.ui.confirm_sheet").show{
+                title = _("Stable pages in all books"),
+                message = _("Every book you open will show stable pages: the page numbers and the total no longer change with the font size. Books you are already reading may show a different page number and total. Nothing is deleted. To change one book, use Edit > Book settings > Stable pages."),
+                confirm_text = _("Turn on"),
+                on_confirm = function() finish(function() SP.setGlobalMode(id) end) end,
+            }
+        end
+        local items = {
+            { kind = "note", text = _("Page numbers that stay the same whatever the font size, as in a printed book.") },
+            { kind = "note", text = _("Bold: in use now. Dot: your choice, for all books; tap it again to follow KOReader's setting.") },
+        }
+        local options = {
+            { id = "off", label = _("Off") },
+            { id = "koreader", label = _("KOReader numbering") },
+            { id = "metadata", label = _("Metadata page count (or KOReader's)") },
+        }
+        for _i, opt in ipairs(options) do
+            items[#items + 1] = {
+                text = opt.label, kind = "radio",
+                dot = (own == opt.id), bold = (effective == opt.id),
+                on_pick = function() pick(opt.id) end,
+            }
+        end
+        return { title = _("Stable pages"), items = items }
     elseif page_id == "battery" then
         return radioPage(_("Battery"), {
             { id = "fill", label = BATTERY_LABELS.fill },
@@ -787,8 +836,13 @@ local function scale(px) return Screen:scaleBySize(px) end
 local function rowHeight() return scale(64) end
 local function sectionHeight() return scale(44) end
 
+-- A note holds two lines of small text.
+local function noteHeight() return scale(64) end
+
 local function itemHeight(item)
-    return item.section and sectionHeight() or rowHeight()
+    if item.section then return sectionHeight() end
+    if item.kind == "note" then return noteHeight() end
+    return rowHeight()
 end
 
 -- First item of every page. A section heading never ends a page.
@@ -942,6 +996,10 @@ local function buildRow(item, w)
                 or (on and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_DARK_GRAY),
         }
         addRight(glyph, glyph:getSize().w, true)
+    elseif item.kind == "radio" and item.dot ~= nil then
+        -- Squares, as in Book settings: a dot marks the choice made, bold marks what is in use.
+        local mark = loadSvg(item.dot and "square-dot.svg" or "square.svg", chev_sz, color)
+        if mark then addRight(mark, chev_sz, true) end
     elseif item.kind == "radio" and item.checked then
         local check = TextWidget:new{
             text = "✓", face = Font:getFace("cfont", scale(22)), bold = true, fgcolor = color,
@@ -1000,6 +1058,21 @@ local function buildSection(item, w)
     })
 end
 
+-- A short explanation under a section heading: gray, two lines at most (cut
+-- with "…" beyond that), no icon and nothing to tap.
+local function buildNote(item, w)
+    local h = noteHeight()
+    return KoboldWidgets.fixed(w, h, LeftContainer:new{
+        dimen = Geom:new{ w = w, h = h },
+        TextBoxWidget:new{
+            text = item.text, face = KoboldWidgets.face(15),
+            fgcolor = KoboldWidgets.subtitleColor(),
+            width = w, height = h - scale(8),
+            height_adjust = true, height_overflow_show_ellipsis = true,
+        },
+    })
+end
+
 function KoboldSettings:build()
     local W, H = self.dimen.w, self.dimen.h
     local bar       = KoboldMetrics.statusBar()
@@ -1042,6 +1115,9 @@ function KoboldSettings:build()
         if item.section then
             list[#list + 1] = buildSection(item, list_w)
             cy = cy + sectionHeight()
+        elseif item.kind == "note" then
+            list[#list + 1] = buildNote(item, list_w)
+            cy = cy + noteHeight()
         else
             if item.kind == "chip" then
                 list[#list + 1] = buildChipRow(item, list_w)

@@ -182,7 +182,14 @@ local function readMeta(file)
         end
     end
 
-    local series = text(cp and cp.series) or text(info.series)
+    -- A series emptied on purpose (saved as "") stays empty, whatever the
+    -- cover browser read from the book.
+    local series
+    if cp and cp.series == "" then
+        series = nil
+    else
+        series = text(cp and cp.series) or text(info.series)
+    end
     if series then
         local idx = tonumber(text(cp and cp.series_index) or info.series_index)
         series, idx = splitSeries(series, idx)

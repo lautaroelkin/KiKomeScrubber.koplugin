@@ -100,6 +100,11 @@ function CoverSplash.show(file, view)
     end)
 end
 
+-- The screen area the splash covers (all of it), or nil when none is shown.
+function CoverSplash.region()
+    return current and current.dimen or nil
+end
+
 function CoverSplash.close()
     if current then
         local w = current

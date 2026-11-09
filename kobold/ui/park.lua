@@ -319,6 +319,13 @@ function Park.closeScreen(screen)
     end)
 end
 
+-- The real close of the parked book now, for a change that only a fresh opening
+-- shows (the stable pages: KOReader builds its own numbering when the book
+-- loads). The caller shows the "Closing" pill. True when it ran.
+function Park.finish(reason)
+    return finishCore(reason or "asked")
+end
+
 -- Another book is about to open while one is parked: the parked one closes
 -- first (no file browser is built; the new book takes its place). This runs
 -- inside the opening wait, so its cost is not felt separately.

@@ -21,6 +21,16 @@
 --       on_finish    = function(picker) end,            -- the screen is already closed
 --       empty_text   = "Nothing here.",
 --   }
+-- Optional, for long lists with pictures (the cover image picker):
+--       row_sub   = function(row, picker) return "text" end   -- a row's small line,
+--                   asked only for the rows on screen (when the row has no `sub`)
+--       row_thumb = function(row, size, load, picker) return widget | nil, pending end
+--                   a picture for the icon tile, asked only for the rows on screen.
+--                   load=false: give only what is ready (nil, true = not yet); the
+--                   picker draws at once and, one moment later, once more with
+--                   load=true, so a page never waits for its pictures.
+--       row_scale = 1.3, tile = 72      -- taller rows and a bigger tile
+--       on_close  = function(picker) end  -- the screen was left (done or cancelled)
 -- `picker.state` is a table for the caller's own use (the open folder, the
 -- ticked rows).
 
@@ -99,6 +109,7 @@ local Picker = InputContainer:extend{
     on_tap = nil,
     on_finish = nil,
     empty_text = nil,
+    row_sub = nil, row_thumb = nil, row_scale = nil, tile = nil, on_close = nil,
 }
 
 function Picker:init()
@@ -151,7 +162,7 @@ end
 -- the marker on the right.
 function Picker:itemRow(row, row_w, row_h)
     local gap = U(16)
-    local tile = math.min(U(44), row_h - U(16))
+    local tile = math.min(U(self.tile or 44), row_h - U(16))
     local check_w = U(26)
     local text_w = row_w - tile - check_w - 2 * gap
     local fg = row.locked and C_LOCKED or BLACK
@@ -159,18 +170,35 @@ function Picker:itemRow(row, row_w, row_h)
         align = "left",
         TextWidget:new{ text = row.text or "", face = KoboldWidgets.face(17), fgcolor = fg, max_width = text_w },
     }
-    if row.sub and row.sub ~= "" then
+    local sub = row.sub
+    if sub == nil and self.row_sub then
+        local ok_s, got = pcall(self.row_sub, row, self)
+        if ok_s then sub = got end
+    end
+    if sub and sub ~= "" then
         text[#text + 1] = VerticalSpan:new{ width = U(3) }
         text[#text + 1] = TextWidget:new{
-            text = row.sub, face = KoboldWidgets.face(13),
+            text = sub, face = KoboldWidgets.face(13),
             fgcolor = row.locked and C_LOCKED or KoboldWidgets.subtitleColor(), max_width = text_w,
         }
     end
+    -- a picture when the caller has one (or will have one in a moment)
+    local inner
+    if self.row_thumb then
+        local can_load = self.load_thumbs and os.clock() < (self.thumb_deadline or 0)
+        local ok_t, widget, pending = pcall(self.row_thumb, row, math.floor(tile * 0.9), can_load, self)
+        if ok_t and widget then
+            inner = widget
+        elseif ok_t and pending then
+            self.thumbs_pending = true
+        end
+    end
+    inner = inner or OptionSheet.iconWidget(row.icon or "folder", math.floor(tile * 0.5), fg)
     local icon_tile = FrameContainer:new{
         bordersize = 0, padding = 0, radius = U(12), background = C_FIELD,
         KoboldWidgets.fixed(tile, tile, CenterContainer:new{
             dimen = Geom:new{ w = tile, h = tile },
-            OptionSheet.iconWidget(row.icon or "folder", math.floor(tile * 0.5), fg),
+            inner,
         }),
     }
     local line_h = U(1)
@@ -190,6 +218,7 @@ function Picker:itemRow(row, row_w, row_h)
 end
 
 function Picker:build()
+    self.thumbs_pending = false
     local W, H = Screen:getWidth(), Screen:getHeight()
     local margin = U(30)
     local content_w = W - 2 * margin
@@ -245,7 +274,7 @@ function Picker:build()
     local list_h = H - U(20) - y
     local bar_w, bar_gap, arrow = U(28), U(10), U(24)
     local row_w = content_w - bar_w - bar_gap
-    local base_h = math.floor(W * 0.14)
+    local base_h = math.floor(W * 0.14 * (self.row_scale or 1))
     local per_page = math.max(1, math.floor(list_h / base_h))
     local row_h = math.floor(list_h / per_page)
     if row_h > math.floor(base_h * 1.4) then row_h = base_h end
@@ -298,6 +327,43 @@ function Picker:build()
         background = WHITE,
         layers,
     }
+    if self.thumbs_pending and not self.closed then self:scheduleThumbs() end
+end
+
+-- Pictures that were not ready when the page was drawn: one moment later the
+-- page is drawn again and they are made then (for a short while at most; what
+-- is left waits for the next round).
+function Picker:scheduleThumbs()
+    if self.thumb_job then return end
+    self.thumb_job = function()
+        self.thumb_job = nil
+        if self.closed then return end
+        self.load_thumbs = true
+        self.thumb_deadline = os.clock() + 1.2
+        local ok, err = pcall(self.build, self)
+        self.load_thumbs = false
+        if not ok then
+            require("logger").warn("KiKome: the list could not be drawn again:", tostring(err))
+            return
+        end
+        local region = Geom:new{
+            x = 0, y = self.y_list or 0, w = Screen:getWidth(),
+            h = (self.list_end or Screen:getHeight()) - (self.y_list or 0),
+        }
+        UIManager:setDirty(self, function() return "ui", region end)
+    end
+    UIManager:scheduleIn(0.15, self.thumb_job)
+end
+
+-- The screen is left: nothing more is drawn, the caller can let go.
+function Picker:markClosed()
+    if self.closed then return end
+    self.closed = true
+    if self.thumb_job then
+        UIManager:unschedule(self.thumb_job)
+        self.thumb_job = nil
+    end
+    if self.on_close then pcall(self.on_close, self) end
 end
 
 -- ── Taps ───────────────────────────────────────────────────────────────────
@@ -306,12 +372,14 @@ local function inside(r, pos)
 end
 
 function Picker:dismiss()
+    self:markClosed()
     UIManager:close(self, "ui")
     return true
 end
 
 function Picker:finish()
     if not self:canFinish() then return end
+    self:markClosed()
     UIManager:close(self, "ui")
     if self.on_finish then self.on_finish(self) end
 end

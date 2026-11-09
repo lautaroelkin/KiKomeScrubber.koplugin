@@ -184,7 +184,7 @@ local seen, paint_count = setmetatable({}, { __mode = "k" }), 0
 function CoverBadge.setOpening(path, screen, pos)
     opening_path = path
     opening_target = nil
-    if not path then return end
+    if not path then return false end
     local best
     for ov, serial in pairs(seen) do
         if ov.path == path and ov.dimen then
@@ -204,7 +204,14 @@ function CoverBadge.setOpening(path, screen, pos)
         opening_target = best.ov
         UIManager:setDirty(screen or "all", "ui", best.ov.dimen)
         UIManager:forceRePaint()
+        return true
     end
+    return false
+end
+
+-- The screen area of the cover that shows the "Opening" pill, or nil.
+function CoverBadge.openingRegion()
+    return opening_target and opening_target.dimen or nil
 end
 
 -- Takes the pill away. With `refresh`, the cover is repainted too (use it

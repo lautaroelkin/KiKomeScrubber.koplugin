@@ -88,15 +88,28 @@ function KoboldReader.open(screen, file, opts)
     -- after-open callback (or after 15 s, if the book never reports back).
     local Transition = require("kobold.ui.transition")
     local pill_screen = opts.pill_screen or screen
+    -- The screen area that was just painted with the pill (or the splash): it
+    -- is sent to the panel again before the slow part starts (see below).
+    local painted
     if Transition.enabled() then
+        local Splash = require("kobold.ui.cover_splash")
         if opts.splash then
-            require("kobold.ui.cover_splash").show(file)
+            Splash.show(file)
+            painted = Splash.region()
         else
             -- From Book Details its own cover gets the pill (the one painted
             -- last); otherwise the cover nearest to the tap does.
             local pos = (not opts.pill_screen) and require("kobold.ui.taps").recentPos() or nil
-            CoverBadge.setOpening(file, pill_screen, pos)
-            UIManager:scheduleIn(15, function() CoverBadge.clearOpening(pill_screen, true) end)
+            if CoverBadge.setOpening(file, pill_screen, pos) then
+                painted = CoverBadge.openingRegion()
+                UIManager:scheduleIn(15, function() CoverBadge.clearOpening(pill_screen, true) end)
+            else
+                -- No cover of this book is on screen to carry the pill (a
+                -- list without covers, a screen not painted yet): the opening
+                -- splash gives the feedback instead of nothing.
+                Splash.show(file)
+                painted = Splash.region()
+            end
         end
     end
     local function openNow()
@@ -124,7 +137,14 @@ function KoboldReader.open(screen, file, opts)
             require("kobold.ui.toast").error(_("Could not open the book: ") .. tostring(err), { timeout = 6 })
         end
     end
-    if Transition.enabled() then UIManager:nextTick(openNow) else openNow() end
+    if Transition.enabled() then
+        -- Opening the book blocks the screen for a while. First the pill has to
+        -- really reach the panel: on a Kindle the update asked for when it was
+        -- painted can be lost, and then it would never show.
+        require("kobold.ui.refresh").afterPaint(painted, openNow)
+    else
+        openNow()
+    end
 end
 
 -- The book is open (or could not be opened): takes away the "Opening" pill
