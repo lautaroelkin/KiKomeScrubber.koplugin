@@ -1,0 +1,1830 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: KiKomeScrubber\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language: pt_BR\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "KiKome"
+msgstr "KiKome"
+
+msgid "January"
+msgstr "Janeiro"
+
+msgid "February"
+msgstr "Fevereiro"
+
+msgid "March"
+msgstr "Março"
+
+msgid "April"
+msgstr "Abril"
+
+msgid "May"
+msgstr "Maio"
+
+msgid "June"
+msgstr "Junho"
+
+msgid "July"
+msgstr "Julho"
+
+msgid "August"
+msgstr "Agosto"
+
+msgid "September"
+msgstr "Setembro"
+
+msgid "October"
+msgstr "Outubro"
+
+msgid "November"
+msgstr "Novembro"
+
+msgid "December"
+msgstr "Dezembro"
+
+msgid "Red"
+msgstr "Vermelho"
+
+msgid "Orange"
+msgstr "Laranja"
+
+msgid "Yellow"
+msgstr "Amarelo"
+
+msgid "Green"
+msgstr "Verde"
+
+msgid "Olive"
+msgstr "Oliva"
+
+msgid "Cyan"
+msgstr "Ciano"
+
+msgid "Blue"
+msgstr "Azul"
+
+msgid "Purple"
+msgstr "Roxo"
+
+msgid "Gray"
+msgstr "Cinza"
+
+msgid "Home"
+msgstr "Início"
+
+msgid "Library"
+msgstr "Biblioteca"
+
+msgid "Series"
+msgstr "Séries"
+
+msgid "Authors"
+msgstr "Autores"
+
+msgid "Collections"
+msgstr "Coleções"
+
+msgid "Favorites"
+msgstr "Favoritos"
+
+msgid "To be read"
+msgstr "Para ler"
+
+msgid "Genres"
+msgstr "Gêneros"
+
+msgid "All books"
+msgstr "Todos os livros"
+
+msgid "Could not parse the OPF."
+msgstr "Não foi possível analisar o OPF."
+
+msgid "Could not open the EPUB."
+msgstr "Não foi possível abrir o EPUB."
+
+msgid "Could not write the edited OPF."
+msgstr "Não foi possível gravar o OPF editado."
+
+msgid "Only EPUB books can be written."
+msgstr "Apenas livros EPUB podem ser gravados."
+
+msgid "Could not find the OPF in the book."
+msgstr "Não foi possível encontrar o OPF no livro."
+
+msgid "Could not create the temporary file."
+msgstr "Não foi possível criar o arquivo temporário."
+
+msgid "The OPF was not found while repacking."
+msgstr "O OPF não foi encontrado ao reempacotar."
+
+msgid "The new file did not pass the check; the book was left as it was."
+msgstr "O novo arquivo não passou na verificação; o livro continuou como estava."
+
+msgid "Could not keep a copy of the book; it was left as it was."
+msgstr "Não foi possível guardar uma cópia do livro; ele continuou como estava."
+
+msgid "Could not replace the book: %s"
+msgstr "Não foi possível substituir o livro: %s"
+
+msgid "%d BOOKS"
+msgstr "%d LIVROS"
+
+msgid "COLLECTION"
+msgstr "COLEÇÃO"
+
+msgid "More Books"
+msgstr "Mais livros"
+
+msgid "English"
+msgstr "Inglês"
+
+msgid "Spanish"
+msgstr "Espanhol"
+
+msgid "French"
+msgstr "Francês"
+
+msgid "German"
+msgstr "Alemão"
+
+msgid "Italian"
+msgstr "Italiano"
+
+msgid "Portuguese"
+msgstr "Português"
+
+msgid "Russian"
+msgstr "Russo"
+
+msgid "Japanese"
+msgstr "Japonês"
+
+msgid "Chinese"
+msgstr "Chinês"
+
+msgid "Korean"
+msgstr "Coreano"
+
+msgid "Arabic"
+msgstr "Árabe"
+
+msgid "Latin"
+msgstr "Latim"
+
+msgid "Catalan"
+msgstr "Catalão"
+
+msgid "Dutch"
+msgstr "Holandês"
+
+msgid "Polish"
+msgstr "Polonês"
+
+msgid "Swedish"
+msgstr "Sueco"
+
+msgid "Turkish"
+msgstr "Turco"
+
+msgid "Greek"
+msgstr "Grego"
+
+msgid "Hebrew"
+msgstr "Hebraico"
+
+msgid "Hindi"
+msgstr "Hindi"
+
+msgid "There is nothing to write."
+msgstr "Não há nada para gravar."
+
+msgid "The EPUB writer could not be loaded."
+msgstr "O gravador de EPUB não pôde ser carregado."
+
+msgid "Unknown author"
+msgstr "Autor desconhecido"
+
+msgid "Total hours read"
+msgstr "Total de horas lidas"
+
+msgid "%s hours read totally"
+msgstr "%s horas lidas no total"
+
+msgid "Hours this week"
+msgstr "Horas nesta semana"
+
+msgid "Less than 1 hour this week"
+msgstr "Menos de 1 hora nesta semana"
+
+msgid "%d hour this week"
+msgstr "%d hora nesta semana"
+
+msgid "%d hours this week"
+msgstr "%d horas nesta semana"
+
+msgid "Time read today"
+msgstr "Tempo de leitura hoje"
+
+msgid "%d minute today"
+msgstr "%d minuto hoje"
+
+msgid "%d minutes today"
+msgstr "%d minutos hoje"
+
+msgid "Less than 1 hour today"
+msgstr "Menos de 1 hora hoje"
+
+msgid "%d hour today"
+msgstr "%d hora hoje"
+
+msgid "%d hours today"
+msgstr "%d horas hoje"
+
+msgid "Pages read today"
+msgstr "Páginas lidas hoje"
+
+msgid "%d page today"
+msgstr "%d página hoje"
+
+msgid "%d pages today"
+msgstr "%d páginas hoje"
+
+msgid "Pages read this week"
+msgstr "Páginas lidas nesta semana"
+
+msgid "%d page this week"
+msgstr "%d página nesta semana"
+
+msgid "%d pages this week"
+msgstr "%d páginas nesta semana"
+
+msgid "Reading streak"
+msgstr "Sequência de leitura"
+
+msgid "%d day in a row"
+msgstr "%d dia seguido"
+
+msgid "%d days in a row"
+msgstr "%d dias seguidos"
+
+msgid "Nothing"
+msgstr "Nada"
+
+msgid "Books"
+msgstr "Livros"
+
+msgid "Files"
+msgstr "Arquivos"
+
+msgid "About"
+msgstr "Sobre"
+
+msgid "Kobold"
+msgstr "Kobold"
+
+msgid "Version "
+msgstr "Versão "
+
+msgid "A home screen for KOReader that brings back the calm, familiar look of your e-reader's original software. Made out of love for that look: your books up front, quiet pages, and everything one tap away."
+msgstr "Uma tela inicial para o KOReader que traz de volta o visual calmo e familiar do software original do seu e-reader. Feita com carinho por esse visual: seus livros em destaque, páginas tranquilas e tudo a um toque de distância."
+
+msgid "Project"
+msgstr "Projeto"
+
+msgid "Source code"
+msgstr "Código-fonte"
+
+msgid "GitHub"
+msgstr "GitHub"
+
+msgid "License"
+msgstr "Licença"
+
+msgid "Free and open source software under the GNU General Public License, version 3."
+msgstr "Software livre e de código aberto sob a Licença Pública Geral da GNU, versão 3."
+
+msgid "Scan to open the project page"
+msgstr "Escaneie para abrir a página do projeto"
+
+msgid "Debug mode on. Long-press the clock to save a screenshot."
+msgstr "Modo de depuração ativado. Mantenha o relógio pressionado para salvar uma captura de tela."
+
+msgid "Debug mode off."
+msgstr "Modo de depuração desativado."
+
+msgid "This action is not available: "
+msgstr "Esta ação não está disponível: "
+
+msgid "The action failed: "
+msgstr "A ação falhou: "
+
+msgid "Battery"
+msgstr "Bateria"
+
+msgid "Charging"
+msgstr "Carregando"
+
+msgid "Not charging"
+msgstr "Não está carregando"
+
+msgid "Unknown"
+msgstr "Desconhecido"
+
+msgid "On hold · %d%%"
+msgstr "Em pausa · %d%%"
+
+msgid "On hold"
+msgstr "Em pausa"
+
+msgid "Finished"
+msgstr "Concluído"
+
+msgid "%d%% read"
+msgstr "%d%% lido"
+
+msgid "Unread"
+msgstr "Não lido"
+
+msgid "Book Details"
+msgstr "Detalhes do livro"
+
+msgid "%d of %d pages"
+msgstr "%d de %d páginas"
+
+msgid "Read now"
+msgstr "Ler agora"
+
+msgid "Pages"
+msgstr "Páginas"
+
+msgid "Language"
+msgstr "Idioma"
+
+msgid "Format"
+msgstr "Formato"
+
+msgid "Size"
+msgstr "Tamanho"
+
+msgid "Keywords"
+msgstr "Palavras-chave"
+
+msgid "Added"
+msgstr "Adicionado"
+
+msgid "File name"
+msgstr "Nome do arquivo"
+
+msgid "Path"
+msgstr "Caminho"
+
+msgid "Synopsis"
+msgstr "Sinopse"
+
+msgid "Details"
+msgstr "Detalhes"
+
+msgid "No synopsis."
+msgstr "Sem sinopse."
+
+msgid "Reading"
+msgstr "Lendo"
+
+msgid "Metadata"
+msgstr "Metadados"
+
+msgid "Book settings"
+msgstr "Configurações do livro"
+
+msgid "Reset this document"
+msgstr "Redefinir este documento"
+
+msgid "Export notes of the document (.md)"
+msgstr "Exportar notas do documento (.md)"
+
+msgid "Refresh metadata"
+msgstr "Atualizar metadados"
+
+msgid "Rename"
+msgstr "Renomear"
+
+msgid "Copy"
+msgstr "Copiar"
+
+msgid "Cut"
+msgstr "Recortar"
+
+msgid "Select"
+msgstr "Selecionar"
+
+msgid "Delete"
+msgstr "Excluir"
+
+msgid "Status"
+msgstr "Status"
+
+msgid "Edit"
+msgstr "Editar"
+
+msgid "Add review…"
+msgstr "Adicionar avaliação…"
+
+msgid "Save"
+msgstr "Salvar"
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Restore original"
+msgstr "Restaurar original"
+
+msgid "Review"
+msgstr "Avaliação"
+
+msgid "Write your review…"
+msgstr "Escreva sua avaliação…"
+
+msgid "The review could not be saved."
+msgstr "Não foi possível salvar a avaliação."
+
+msgid "Title"
+msgstr "Título"
+
+msgid "One author per line"
+msgstr "Um autor por linha"
+
+msgid "Series number"
+msgstr "Número da série"
+
+msgid "Type a keyword and press Enter"
+msgstr "Digite uma palavra-chave e pressione Enter"
+
+msgid "Description"
+msgstr "Descrição"
+
+msgid "Cover"
+msgstr "Capa"
+
+msgid "Write to book"
+msgstr "Gravar no livro"
+
+msgid "Custom cover"
+msgstr "Capa personalizada"
+
+msgid "From the book"
+msgstr "Do livro"
+
+msgid "Not set"
+msgstr "Não definido"
+
+msgid "Restore original metadata"
+msgstr "Restaurar metadados originais"
+
+msgid "Coming soon."
+msgstr "Em breve."
+
+msgid "Series in your library"
+msgstr "Séries na sua biblioteca"
+
+msgid "Languages"
+msgstr "Idiomas"
+
+msgid "Keywords in your library"
+msgstr "Palavras-chave na sua biblioteca"
+
+msgid "Authors in your library"
+msgstr "Autores na sua biblioteca"
+
+msgid "This book is not in a series yet."
+msgstr "Este livro ainda não está em uma série."
+
+msgid "%s has 1 book in your library."
+msgstr "%s tem 1 livro na sua biblioteca."
+
+msgid "%s has %d books in your library."
+msgstr "%s tem %d livros na sua biblioteca."
+
+msgid "Number"
+msgstr "Número"
+
+msgid "The metadata could not be saved."
+msgstr "Os metadados não puderam ser salvos."
+
+msgid "The series number must be a number."
+msgstr "O número da série deve ser um número."
+
+msgid "Write the series first: the number belongs to it."
+msgstr "Escreva a série primeiro: o número pertence a ela."
+
+msgid "Only EPUB books can be written to."
+msgstr "Só é possível gravar em livros EPUB."
+
+msgid "Nothing is corrected yet: there is nothing to write."
+msgstr "Nada foi corrigido ainda: não há nada para gravar."
+
+msgid "The book is open in the reader. Close it first."
+msgstr "O livro está aberto no leitor. Feche-o primeiro."
+
+msgid "Goes into the EPUB: %s."
+msgstr "É gravado no EPUB: %s."
+
+msgid "The book file itself is rewritten, so Calibre and other apps will see the changes. Its checksum changes: KOReader may treat it as a new book for statistics and sync."
+msgstr "O arquivo do próprio livro é reescrito, de modo que o Calibre e outros aplicativos verão as mudanças. A soma de verificação muda: o KOReader pode tratá-lo como um novo livro para as estatísticas e a sincronização."
+
+msgid "What you corrected here is cleared from KiKome, since the book holds it now. Only a backup copy lets you undo this."
+msgstr "O que você corrigiu aqui é apagado do KiKome, já que o livro agora o armazena. Apenas uma cópia de backup permite desfazer isso."
+
+msgid "The cover is not written."
+msgstr "A capa não é gravada."
+
+msgid "Write to the book file"
+msgstr "Gravar no arquivo do livro"
+
+msgid "Keep a backup copy"
+msgstr "Manter uma cópia de backup"
+
+msgid "Write"
+msgstr "Gravar"
+
+msgid "Writing to the book…"
+msgstr "Gravando no livro…"
+
+msgid "The book could not be written: "
+msgstr "O livro não pôde ser gravado: "
+
+msgid "Metadata written to the book."
+msgstr "Metadados gravados no livro."
+
+msgid "The title, authors, series (and its number), language, keywords, description, publisher, year, ISBN and pages go back to what the book itself says."
+msgstr "O título, autores, série (e seu número), idioma, palavras-chave, descrição, editora, ano, ISBN e páginas voltam ao que o próprio livro diz."
+
+msgid "Restore"
+msgstr "Restaurar"
+
+msgid "Note"
+msgstr "Nota"
+
+msgid "Bookmark"
+msgstr "Marcador"
+
+msgid "Highlight"
+msgstr "Destaque"
+
+msgid "Invert"
+msgstr "Inverter"
+
+msgid "Underline"
+msgstr "Sublinhado"
+
+msgid "Strikethrough"
+msgstr "Tachado"
+
+msgid "Page"
+msgstr "Página"
+
+msgid "Bookmarks"
+msgstr "Marcadores"
+
+msgid "Highlights"
+msgstr "Destaques"
+
+msgid "Notes"
+msgstr "Notas"
+
+msgid "All"
+msgstr "Todos"
+
+msgid "Show"
+msgstr "Mostrar"
+
+msgid "Highlight style"
+msgstr "Estilo de destaque"
+
+msgid "Filter"
+msgstr "Filtrar"
+
+msgid "Annotations"
+msgstr "Anotações"
+
+msgid "No annotations yet."
+msgstr "Nenhuma anotação ainda."
+
+msgid "Nothing matches this filter."
+msgstr "Nada corresponde a este filtro."
+
+msgid "Show in book"
+msgstr "Mostrar no livro"
+
+msgid "The Favorites collection could not be changed."
+msgstr "A coleção Favoritos não pôde ser alterada."
+
+msgid "The rating could not be saved."
+msgstr "A classificação não pôde ser salva."
+
+msgid "The status could not be saved."
+msgstr "O status não pôde ser salvo."
+
+msgid "Plugins"
+msgstr "Plugins"
+
+msgid "That plugin action failed."
+msgstr "Essa ação do plugin falhou."
+
+msgid "KOReader's collections are not available."
+msgstr "As coleções do KOReader não estão disponíveis."
+
+msgid "Add to collections"
+msgstr "Adicionar às coleções"
+
+msgid "You have no collections yet."
+msgstr "Você ainda não tem coleções."
+
+msgid "Already added"
+msgstr "Já adicionado"
+
+msgid "Will be removed"
+msgstr "Será removido"
+
+msgid "1 book"
+msgstr "1 livro"
+
+msgid " books"
+msgstr " livros"
+
+msgid "The collections could not be saved."
+msgstr "As coleções não puderam ser salvas."
+
+msgid "Collections updated."
+msgstr "Coleções atualizadas."
+
+msgid "Added to 1 collection."
+msgstr "Adicionado a 1 coleção."
+
+msgid "Added to %d collections."
+msgstr "Adicionado a %d coleções."
+
+msgid "Removed from 1 collection."
+msgstr "Removido de 1 coleção."
+
+msgid "Removed from %d collections."
+msgstr "Removido de %d coleções."
+
+msgid "Move to"
+msgstr "Mover para"
+
+msgid "Copy to"
+msgstr "Copiar para"
+
+msgid "Move here"
+msgstr "Mover para cá"
+
+msgid "Copy here"
+msgstr "Copiar para cá"
+
+msgid "No folders here."
+msgstr "Não há pastas aqui."
+
+msgid "Parent folder"
+msgstr "Pasta superior"
+
+msgid "This book is here"
+msgstr "Este livro está aqui"
+
+msgid "View Details"
+msgstr "Ver detalhes"
+
+msgid "Edit book"
+msgstr "Editar livro"
+
+msgid "Remove from collection"
+msgstr "Remover da coleção"
+
+msgid "Date"
+msgstr "Data"
+
+msgid "Title A–Z"
+msgstr "Título A–Z"
+
+msgid "Title Z–A"
+msgstr "Título Z–A"
+
+msgid "Recent"
+msgstr "Recentes"
+
+msgid "Newest"
+msgstr "Mais novos"
+
+msgid "1 selected"
+msgstr "1 selecionado"
+
+msgid "%d selected"
+msgstr "%d selecionados"
+
+msgid "Filter: "
+msgstr "Filtro: "
+
+msgid "Sort: "
+msgstr "Ordem: "
+
+msgid "No books match."
+msgstr "Nenhum livro corresponde."
+
+msgid "Every book is already in this collection."
+msgstr "Todos os livros já estão nesta coleção."
+
+msgid "Add (%d)"
+msgstr "Adicionar (%d)"
+
+msgid "Add"
+msgstr "Adicionar"
+
+msgid "Sort"
+msgstr "Ordenar"
+
+msgid "Search books"
+msgstr "Buscar livros"
+
+msgid "Brightness"
+msgstr "Brilho"
+
+msgid "Natural light"
+msgstr "Luz natural"
+
+msgid "Night mode"
+msgstr "Modo noturno"
+
+msgid "Collection name"
+msgstr "Nome da coleção"
+
+msgid "No books yet."
+msgstr "Nenhum livro ainda."
+
+msgid "Create"
+msgstr "Criar"
+
+msgid "Close"
+msgstr "Fechar"
+
+msgid "Confirm"
+msgstr "Confirmar"
+
+msgid "Read"
+msgstr "Lido"
+
+msgid "Opening"
+msgstr "Abrindo"
+
+msgid "No KOReader actions were found."
+msgstr "Nenhuma ação do KOReader foi encontrada."
+
+msgid "%d already there"
+msgstr "%d já estão lá"
+
+msgid "%d open now"
+msgstr "%d abertos agora"
+
+msgid "%d not found"
+msgstr "%d não encontrados"
+
+msgid "folder not found"
+msgstr "pasta não encontrada"
+
+msgid "Nothing to move."
+msgstr "Nada para mover."
+
+msgid "Nothing to copy."
+msgstr "Nada para copiar."
+
+msgid "Working…"
+msgstr "Trabalhando…"
+
+msgid "%s moved."
+msgstr "%s movido."
+
+msgid "%s copied."
+msgstr "%s copiado."
+
+msgid "%d failed."
+msgstr "%d falharam."
+
+msgid "Left out: "
+msgstr "Ignorados: "
+
+msgid "Nothing to delete."
+msgstr "Nada para excluir."
+
+msgid "Delete this book? Its reading progress, history and collections go too. This cannot be undone."
+msgstr "Excluir este livro? Seu progresso de leitura, histórico e coleções também serão excluídos. Isso não pode ser desfeito."
+
+msgid "Delete %s? Their reading progress, history and collections go too. This cannot be undone."
+msgstr "Excluir %s? O progresso de leitura, histórico e coleções deles também serão excluídos. Isso não pode ser desfeito."
+
+msgid "%s deleted."
+msgstr "%s excluído."
+
+msgid "This book is open. Close it first."
+msgstr "Este livro está aberto. Feche-o primeiro."
+
+msgid "Rename book"
+msgstr "Renomear livro"
+
+msgid "That name is not valid for a file."
+msgstr "Esse nome não é válido para um arquivo."
+
+msgid "A file or folder with that name already exists."
+msgstr "Um arquivo ou pasta com esse nome já existe."
+
+msgid "The book could not be renamed."
+msgstr "O livro não pôde ser renomeado."
+
+msgid "The document could not be reset."
+msgstr "O documento não pôde ser redefinido."
+
+msgid "Reset this document? Its reading progress, highlights, notes, status and settings are erased. The book file, its custom cover and corrected metadata stay. This cannot be undone."
+msgstr "Redefinir este documento? Seu progresso de leitura, destaques, notas, status e configurações serão apagados. O arquivo do livro, sua capa personalizada e metadados corrigidos são mantidos. Isso não pode ser desfeito."
+
+msgid "Reset"
+msgstr "Redefinir"
+
+msgid "Document reset."
+msgstr "Documento redefinido."
+
+msgid "This book has no annotations to export."
+msgstr "Este livro não tem anotações para exportar."
+
+msgid "Export document"
+msgstr "Exportar documento"
+
+msgid "Export"
+msgstr "Exportar"
+
+msgid "The notes could not be exported."
+msgstr "As notas não puderam ser exportadas."
+
+msgid "Saved in:"
+msgstr "Salvo em:"
+
+msgid "The metadata could not be refreshed."
+msgstr "Os metadados não puderam ser atualizados."
+
+msgid "Metadata refresh queued."
+msgstr "Atualização de metadados na fila."
+
+msgid "%s selected"
+msgstr "%s selecionado"
+
+msgid "Tap a book to select it"
+msgstr "Toque em um livro para selecioná-lo"
+
+msgid "This folder is empty."
+msgstr "Esta pasta está vazia."
+
+msgid "Select at least one book first."
+msgstr "Selecione pelo menos um livro primeiro."
+
+msgid "Copy (%d)"
+msgstr "Copiar (%d)"
+
+msgid "Move (%d)"
+msgstr "Mover (%d)"
+
+msgid "Select all"
+msgstr "Selecionar tudo"
+
+msgid "Delete (%d)"
+msgstr "Excluir (%d)"
+
+msgid "space"
+msgstr "espaço"
+
+msgid "KOReader Settings"
+msgstr "Configurações do KOReader"
+
+msgid "Back"
+msgstr "Voltar"
+
+msgid "%d%% Read"
+msgstr "%d%% Lido"
+
+msgid "Nothing here yet"
+msgstr "Nada aqui ainda"
+
+msgid "No books in this folder."
+msgstr "Nenhum livro nesta pasta."
+
+msgid "No series found in your books. Your collections are under Collections."
+msgstr "Nenhuma série encontrada em seus livros. Suas coleções estão em Coleções."
+
+msgid "No authors found yet. Open a book once so its info gets read."
+msgstr "Nenhum autor encontrado ainda. Abra um livro uma vez para que suas informações sejam lidas."
+
+msgid "No collections yet. Make one from a book's menu in the file browser."
+msgstr "Nenhuma coleção ainda. Crie uma pelo menu de um livro no navegador de arquivos."
+
+msgid "No genres found. They come from the keywords of your books."
+msgstr "Nenhum gênero encontrado. Eles vêm das palavras-chave dos seus livros."
+
+msgid "No books in Favorites yet. Add one from a book's menu in the file browser."
+msgstr "Nenhum livro em Favoritos ainda. Adicione um pelo menu de um livro no navegador de arquivos."
+
+msgid "No books in To be read yet. Add one from a book's menu in the file browser."
+msgstr "Nenhum livro em Para ler ainda. Adicione um pelo menu de um livro no navegador de arquivos."
+
+msgid "No books in this collection yet. Add one from a book's menu in the file browser."
+msgstr "Nenhum livro nesta coleção ainda. Adicione um pelo menu de um livro no navegador de arquivos."
+
+msgid "Refresh library"
+msgstr "Atualizar biblioteca"
+
+msgid "Settings"
+msgstr "Configurações"
+
+msgid "Refreshing…"
+msgstr "Atualizando…"
+
+msgid "Library refreshed."
+msgstr "Biblioteca atualizada."
+
+msgid "Nothing here."
+msgstr "Nada aqui."
+
+msgid "Add collection"
+msgstr "Adicionar coleção"
+
+msgid "New Folder"
+msgstr "Nova pasta"
+
+msgid "Paste here (%d)"
+msgstr "Colar aqui (%d)"
+
+msgid "Clear clipboard"
+msgstr "Limpar área de transferência"
+
+msgid "% read"
+msgstr "% lido"
+
+msgid "No books found in your home folder."
+msgstr "Nenhum livro encontrado na sua pasta inicial."
+
+msgid "No books match this filter."
+msgstr "Nenhum livro corresponde a este filtro."
+
+msgid "No books here."
+msgstr "Não há livros aqui."
+
+msgid "No authors found."
+msgstr "Nenhum autor encontrado."
+
+msgid "No series found."
+msgstr "Nenhuma série encontrada."
+
+msgid "No collections yet."
+msgstr "Nenhuma coleção ainda."
+
+msgid "1 item"
+msgstr "1 item"
+
+msgid "%d items"
+msgstr "%d itens"
+
+msgid "The book menu is not available."
+msgstr "O menu do livro não está disponível."
+
+msgid "New collection"
+msgstr "Nova coleção"
+
+msgid "A collection with that name already exists."
+msgstr "Já existe uma coleção com esse nome."
+
+msgid "The collection could not be created."
+msgstr "A coleção não pôde ser criada."
+
+msgid "Rename collection"
+msgstr "Renomear coleção"
+
+msgid "Add to %s"
+msgstr "Adicionar a %s"
+
+msgid "Remove Collection"
+msgstr "Remover coleção"
+
+msgid "Only the collection is removed. Your books stay in your library."
+msgstr "Apenas a coleção é removida. Seus livros continuam na sua biblioteca."
+
+msgid "Remove"
+msgstr "Remover"
+
+msgid "The books could not be added."
+msgstr "Os livros não puderam ser adicionados."
+
+msgid "Removes it from this collection only. The book stays in your library."
+msgstr "Remove apenas desta coleção. O livro continua na sua biblioteca."
+
+msgid "Remove from collection (%d)"
+msgstr "Remover da coleção (%d)"
+
+msgid "Remove %s from this collection? Only the collection changes. The books stay in your library."
+msgstr "Remover %s desta coleção? Apenas a coleção muda. Os livros continuam na sua biblioteca."
+
+msgid "%s removed from the collection."
+msgstr "%s removido da coleção."
+
+msgid "%s ready to move. Open the destination folder, then More > Paste here."
+msgstr "%s pronto para mover. Abra a pasta de destino e, em seguida, Mais > Colar aqui."
+
+msgid "%s ready to copy. Open the destination folder, then More > Paste here."
+msgstr "%s pronto para copiar. Abra a pasta de destino e, em seguida, Mais > Colar aqui."
+
+msgid "Nothing to paste here."
+msgstr "Nada para colar aqui."
+
+msgid "Move"
+msgstr "Mover"
+
+msgid "%s %s to \"%s\"?"
+msgstr "%s %s para \"%s\"?"
+
+msgid "New folder"
+msgstr "Nova pasta"
+
+msgid "Folder name"
+msgstr "Nome da pasta"
+
+msgid "That name is not valid for a folder."
+msgstr "Esse nome não é válido para uma pasta."
+
+msgid "The folder could not be created."
+msgstr "A pasta não pôde ser criada."
+
+msgid "Move to %s"
+msgstr "Mover para %s"
+
+msgid "Every book is already in this folder."
+msgstr "Todos os livros já estão nesta pasta."
+
+msgid "Set as home"
+msgstr "Definir como início"
+
+msgid "Delete Folder"
+msgstr "Excluir pasta"
+
+msgid "Rename folder"
+msgstr "Renomear pasta"
+
+msgid "A book of this folder is open. Close it first."
+msgstr "Há um livro desta pasta aberto. Feche-o primeiro."
+
+msgid "The folder could not be renamed."
+msgstr "A pasta não pôde ser renomeada."
+
+msgid "%s is now your home folder."
+msgstr "%s é agora a sua pasta inicial."
+
+msgid "This folder holds your home folder. Set another home first."
+msgstr "Esta pasta contém sua pasta inicial. Defina outra pasta inicial primeiro."
+
+msgid "Deletes the whole folder, including its books and your reading progress, permanently. This cannot be undone."
+msgstr "Exclui a pasta inteira permanentemente, incluindo seus livros e seu progresso de leitura. Isso não pode ser desfeito."
+
+msgid "Folder deleted."
+msgstr "Pasta excluída."
+
+msgid "The folder could not be deleted."
+msgstr "A pasta não pôde ser excluída."
+
+msgid "Options"
+msgstr "Opções"
+
+msgid "Closing"
+msgstr "Fechando"
+
+msgid "Could not open the book: "
+msgstr "Não foi possível abrir o livro: "
+
+msgid "Name"
+msgstr "Nome"
+
+msgid "Fill"
+msgstr "Preenchimento"
+
+msgid "Percentage"
+msgstr "Porcentagem"
+
+msgid "Covers cannot be prepared right now. The cover browser is busy or not enabled."
+msgstr "As capas não podem ser preparadas agora. O navegador de capas está ocupado ou não ativado."
+
+msgid "Every book already has its cover."
+msgstr "Todos os livros já têm sua capa."
+
+msgid "Preparing %d covers in the background."
+msgstr "Preparando %d capas em segundo plano."
+
+msgid "General"
+msgstr "Geral"
+
+msgid "Opening pill, rounded corners, cover outline and the status bar."
+msgstr "Etiqueta \"Abrindo\", cantos arredondados, contorno da capa e a barra de status."
+
+msgid "Shelves"
+msgstr "Estantes"
+
+msgid "The chips along the top of Home: their order, which are on, and folder chips."
+msgstr "As etiquetas na parte superior do Início: sua ordem, quais estão ativas e as etiquetas de pasta."
+
+msgid "Library options"
+msgstr "Opções da biblioteca"
+
+msgid "The Library (My Books): its tabs (order, on / off) and how it lays out its books, in list and in grid view."
+msgstr "A Biblioteca (Meus Livros): suas guias (ordem, ativar / desativar) e como ela exibe seus livros, nas visualizações de lista e grade."
+
+msgid "App"
+msgstr "Aplicativo"
+
+msgid "Restart KiKome"
+msgstr "Reiniciar KiKome"
+
+msgid "Exit KiKome"
+msgstr "Sair do KiKome"
+
+msgid "Other"
+msgstr "Outros"
+
+msgid "Advanced settings"
+msgstr "Configurações avançadas"
+
+msgid "Opening and closing"
+msgstr "Abertura e fechamento"
+
+msgid "An \"Opening\" pill on the book's cover and a small \"Closing\" pill instead of KOReader's messages. Off: the same as KOReader."
+msgstr "Uma etiqueta \"Abrindo\" na capa do livro e uma pequena etiqueta \"Fechando\" em vez das mensagens do KOReader. Desativado: igual ao KOReader."
+
+msgid "Instant exit from books"
+msgstr "Saída instantânea dos livros"
+
+msgid "Leaving a book shows KiKome at once; the book is really closed later, when you stop touching the device (or when KOReader's file browser is needed). Reopening the same book is instant too. Off: the book is closed first, as KOReader does."
+msgstr "Ao sair de um livro o KiKome é exibido imediatamente; o livro é realmente fechado depois, quando você para de tocar no dispositivo (ou quando o navegador de arquivos do KOReader for necessário). Reabrir o mesmo livro também é instantâneo. Desativado: o livro é fechado primeiro, como o KOReader faz."
+
+msgid "Rounded corners"
+msgstr "Cantos arredondados"
+
+msgid "Round the corners of the covers on Home and in the library, folders included. Off: square corners."
+msgstr "Arredondar os cantos das capas no Início e na biblioteca, incluindo pastas. Desativado: cantos retos."
+
+msgid "Cover outline"
+msgstr "Contorno da capa"
+
+msgid "A thin grey line around every cover, on Home and in the library, in grid and list. Off: covers with no outline."
+msgstr "Uma linha cinza fina ao redor de cada capa, no Início e na biblioteca, em grade e lista. Desativado: capas sem contorno."
+
+msgid "Status bar"
+msgstr "Barra de status"
+
+msgid "Show the charge as a fill inside the icon, or as a number."
+msgstr "Mostra a carga como preenchimento dentro do ícone ou como um número."
+
+msgid "Automatic"
+msgstr "Automático"
+
+msgid "Tabs"
+msgstr "Guias"
+
+msgid "The tabs along the top of the Library: Books, Authors, Series, Collections, Genres and Files. Put them in the order you like and turn off the ones you do not use."
+msgstr "As guias na parte superior da Biblioteca: Livros, Autores, Séries, Coleções, Gêneros e Arquivos. Coloque-as na ordem de sua preferência e desative as que não usar."
+
+msgid "View: list"
+msgstr "Visualização: lista"
+
+msgid "Books per page"
+msgstr "Livros por página"
+
+msgid "Rows on lists with covers: Books, Series, Genres, and the books of an author, series, collection or genre. Automatic fits as many as the screen allows, as Home does."
+msgstr "Linhas em listas com capas: Livros, Séries, Gêneros e os livros de um autor, série, coleção ou gênero. Automático ajusta quantas a tela permitir, como no Início."
+
+msgid "View: grid"
+msgstr "Visualização: grade"
+
+msgid "Rows per page"
+msgstr "Linhas por página"
+
+msgid "Rows of covers in grid view. Automatic fits as many as the screen allows, as Home does."
+msgstr "Linhas de capas na exibição de grade. Automático ajusta quantas a tela permitir, como no Início."
+
+msgid "Show in Collections"
+msgstr "Mostrar em Coleções"
+
+msgid "List the To be read collection in the Library's Collections. Off: it is hidden there. Home has its own switch in Shelves."
+msgstr "Lista a coleção Para ler nas Coleções da Biblioteca. Desativado: fica oculta lá. O Início tem seu próprio controle em Estantes."
+
+msgid "List the Favorites collection in the Library's Collections. Off: it is hidden there. Home has its own switch in Shelves."
+msgstr "Lista a coleção Favoritos nas Coleções da Biblioteca. Desativado: fica oculta lá. O Início tem seu próprio controle em Estantes."
+
+msgid "Based on Kobold"
+msgstr "Baseado em Kobold"
+
+msgid "Reset to defaults"
+msgstr "Restaurar padrões"
+
+msgid "Put every KiKome setting back as it was when first installed."
+msgstr "Retorna todas as configurações do KiKome para como estavam ao serem instaladas pela primeira vez."
+
+msgid "Reset all KiKome settings?"
+msgstr "Restaurar todas as configurações do KiKome?"
+
+msgid "Load missing covers"
+msgstr "Carregar capas ausentes"
+
+msgid "Start"
+msgstr "Iniciar"
+
+msgid "Read the cover of every book that has none yet, in the background. Can take several minutes."
+msgstr "Lê a capa de cada livro que ainda não tem uma, em segundo plano. Pode levar vários minutos."
+
+msgid "Load the missing covers for all books now?"
+msgstr "Carregar agora as capas ausentes para todos os livros?"
+
+msgid "Check for updates"
+msgstr "Buscar atualizações"
+
+msgid "Chips"
+msgstr "Etiquetas"
+
+msgid "Add a chip"
+msgstr "Adicionar uma etiqueta"
+
+msgid "A chip for one folder of your books, or for one collection. The chip takes its name."
+msgstr "Uma etiqueta para uma pasta de seus livros ou para uma coleção. A etiqueta adota o nome dela."
+
+msgid "Maximum of %d chips on. Turn one off first."
+msgstr "Máximo de %d etiquetas ativas. Desative uma primeiro."
+
+msgid "Shelf boards"
+msgstr "Prateleiras das estantes"
+
+msgid "The boards the books stand on in Grid view. Off: the books show without them."
+msgstr "As prateleiras nas quais os livros se apoiam na exibição em Grade. Desativado: os livros aparecem sem elas."
+
+msgid "List the To be read collection here, on Home. Off: it is hidden from this Collections. The Library has its own switch in Library options > Tabs > Collections."
+msgstr "Lista a coleção Para ler aqui, no Início. Desativado: fica oculta destas Coleções. A Biblioteca tem seu próprio controle em Opções da biblioteca > Guias > Coleções."
+
+msgid "List the Favorites collection here, on Home. Off: it is hidden from this Collections. The Library has its own switch in Library options > Tabs > Collections."
+msgstr "Lista a coleção Favoritos aqui, no Início. Desativado: fica oculta destas Coleções. A Biblioteca tem seu próprio controle em Opções da biblioteca > Guias > Coleções."
+
+msgid "Chip"
+msgstr "Etiqueta"
+
+msgid "Remove chip"
+msgstr "Remover etiqueta"
+
+msgid "Takes this folder's chip off the shelves. The folder and its books stay."
+msgstr "Remove a etiqueta desta pasta das estantes. A pasta e seus livros são mantidos."
+
+msgid "Takes this collection's chip off the shelves. The collection and its books stay."
+msgstr "Remove a etiqueta desta coleção das estantes. A coleção e seus livros são mantidos."
+
+msgid "Remove \"%s\" from the shelves?"
+msgstr "Remover \"%s\" das estantes?"
+
+msgid "Folders"
+msgstr "Pastas"
+
+msgid "Adds a chip with this collection's name, showing its books."
+msgstr "Adiciona uma etiqueta com o nome desta coleção, mostrando seus livros."
+
+msgid "That collection already has a chip."
+msgstr "Essa coleção já tem uma etiqueta."
+
+msgid "No collections to add."
+msgstr "Nenhuma coleção para adicionar."
+
+msgid "This folder"
+msgstr "Esta pasta"
+
+msgid "Add this folder as a chip"
+msgstr "Adicionar esta pasta como etiqueta"
+
+msgid "Adds a chip with this folder's name, showing the books under it."
+msgstr "Adiciona uma etiqueta com o nome desta pasta, mostrando os livros dentro dela."
+
+msgid "That folder already has a chip."
+msgstr "Essa pasta já tem uma etiqueta."
+
+msgid "Kobold failed to restart."
+msgstr "O Kobold falhou ao reiniciar."
+
+msgid "At least one tab must stay on."
+msgstr "Pelo menos uma guia deve permanecer ativada."
+
+msgid "At least one chip must stay on."
+msgstr "Pelo menos uma etiqueta deve permanecer ativada."
+
+msgid "Closing the book…"
+msgstr "Fechando o livro…"
+
+msgid "Oldest"
+msgstr "Mais antigos"
+
+msgid "Newest added"
+msgstr "Adicionados mais recentes"
+
+msgid "Oldest added"
+msgstr "Adicionados mais antigos"
+
+msgid "A-Z"
+msgstr "A-Z"
+
+msgid "Z-A"
+msgstr "Z-A"
+
+msgid "Grid"
+msgstr "Grade"
+
+msgid "List"
+msgstr "Lista"
+
+msgid "Sort & Filter"
+msgstr "Ordenar e filtrar"
+
+msgid "Alphabetical"
+msgstr "Alfabético"
+
+msgid "View"
+msgstr "Visualização"
+
+msgid "Search"
+msgstr "Buscar"
+
+msgid "File search is not available."
+msgstr "A busca de arquivos não está disponível."
+
+msgid "Wi-Fi is not available on this device."
+msgstr "O Wi-Fi não está disponível neste dispositivo."
+
+msgid "WI-FI: ENABLED"
+msgstr "WI-FI: ATIVADO"
+
+msgid "WI-FI: DISABLED"
+msgstr "WI-FI: DESATIVADO"
+
+msgid "Connected"
+msgstr "Conectado"
+
+msgid "Not connected"
+msgstr "Não conectado"
+
+msgid "Connect"
+msgstr "Conectar"
+
+msgid "Wi-Fi Settings"
+msgstr "Configurações de Wi-Fi"
+
+msgid "Scanning for networks…"
+msgstr "Procurando redes…"
+
+msgid "no JSON reader"
+msgstr "sem leitor JSON"
+
+msgid "bad release data"
+msgstr "dados de versão inválidos"
+
+msgid "Cannot find KiKome's folder. Please update manually."
+msgstr "Não foi possível encontrar a pasta do KiKome. Atualize manualmente."
+
+msgid "Downloading KiKome %s…"
+msgstr "Baixando KiKome %s…"
+
+msgid "Download failed: "
+msgstr "O download falhou: "
+
+msgid "Installing the update failed. Please update manually."
+msgstr "A instalação da atualização falhou. Atualize manualmente."
+
+msgid "Installing the update failed. The previous version was restored."
+msgstr "A instalação da atualização falhou. A versão anterior foi restaurada."
+
+msgid "KiKome %s is installed.\n\nRestart KOReader to use it?"
+msgstr "KiKome %s está instalado.\n\nReiniciar o KOReader para usá-lo?"
+
+msgid "Restart now"
+msgstr "Reiniciar agora"
+
+msgid "Later"
+msgstr "Mais tarde"
+
+msgid "Please restart KOReader to use the new version."
+msgstr "Reinicie o KOReader para usar a nova versão."
+
+msgid "KiKome %s is available. You have %s."
+msgstr "KiKome %s está disponível. Você tem a versão %s."
+
+msgid "Download and install now?"
+msgstr "Baixar e instalar agora?"
+
+msgid "Install"
+msgstr "Instalar"
+
+msgid "Could not read the installed version."
+msgstr "Não foi possível ler a versão instalada."
+
+msgid "Checking for updates…"
+msgstr "Buscando atualizações…"
+
+msgid "Could not check for updates: "
+msgstr "Não foi possível buscar atualizações: "
+
+msgid "KiKome is up to date (%s)."
+msgstr "O KiKome está atualizado (%s)."
+
+msgid "KiKome %s is out, but its download is not ready yet."
+msgstr "KiKome %s já foi lançado, mas o download ainda não está pronto."
+
+msgid "Start with"
+msgstr "Iniciar com"
+
+msgid "Open KiKome Home"
+msgstr "Abrir o Início do KiKome"
+
+msgid "Configurations"
+msgstr "Configurações"
+
+msgid "KiKome failed to open."
+msgstr "O KiKome falhou ao abrir."
+
+msgid "Clock"
+msgstr "Relógio"
+
+msgid "What the status bar shows where the time is: the time alone, or with the weekday and the date. Tap the clock in the status bar to see the full date. The 12 / 24-hour format is KOReader's."
+msgstr "O que a barra de status mostra no lugar da hora: só a hora, ou com o dia da semana e a data. Toque no relógio da barra para ver a data completa. O formato de 12 / 24 horas é o do KOReader."
+
+msgid "Custom pattern"
+msgstr "Padrão personalizado"
+
+msgid "The pattern shows nothing."
+msgstr "O padrão não mostra nada."
+
+msgid "Date format"
+msgstr "Formato da data"
+
+msgid "Day first or month first, with the year or without it."
+msgstr "Dia primeiro ou mês primeiro, com o ano ou sem ele."
+
+msgid "Write what the clock shows, or go back to the default pattern."
+msgstr "Escreva o que o relógio mostra, ou volte ao padrão."
+
+msgid "Edit pattern"
+msgstr "Editar padrão"
+
+msgid "Reset to default"
+msgstr "Voltar ao padrão"
+
+msgid "Goes back to the default pattern: %s"
+msgstr "Volta ao padrão: %s"
+
+msgid "Write the pattern with the codes below. Any other text stays as written."
+msgstr "Escreva o padrão com os códigos abaixo. O resto do texto fica como está."
+
+msgid "Codes: other text stays as written"
+msgstr "Códigos: o resto do texto fica como está"
+
+msgid "Time"
+msgstr "Hora"
+
+msgid "Weekday, short"
+msgstr "Dia da semana, curto"
+
+msgid "Weekday"
+msgstr "Dia da semana"
+
+msgid "Day"
+msgstr "Dia"
+
+msgid "Day, two digits"
+msgstr "Dia, dois dígitos"
+
+msgid "Month, short"
+msgstr "Mês, curto"
+
+msgid "Month"
+msgstr "Mês"
+
+msgid "Month, number"
+msgstr "Mês, número"
+
+msgid "Year"
+msgstr "Ano"
+
+msgid "New line (two lines at most)"
+msgstr "Quebra de linha (no máximo duas linhas)"
+
+msgid "Choose cover"
+msgstr "Escolher capa"
+
+msgid "Search online"
+msgstr "Buscar na internet"
+
+msgid "Apple Books, Open Library, Amazon and Google Books"
+msgstr "Apple Books, Open Library, Amazon e Google Books"
+
+msgid "Use the book's own cover"
+msgstr "Usar a capa do livro"
+
+msgid "Removes the custom cover"
+msgstr "Remove a capa personalizada"
+
+msgid "The cover you pick is saved for this book only. The book file is not changed."
+msgstr "A capa escolhida é salva apenas para este livro. O arquivo do livro não é alterado."
+
+msgid "Searching Apple Books…"
+msgstr "Buscando na Apple Books…"
+
+msgid "Searching Google Books…"
+msgstr "Buscando no Google Books…"
+
+msgid "Searching Open Library…"
+msgstr "Buscando na Open Library…"
+
+msgid "The book needs a title to look for its cover."
+msgstr "O livro precisa de um título para buscar a capa."
+
+msgid "The search failed. Check the connection and try again."
+msgstr "A busca falhou. Verifique a conexão e tente de novo."
+
+msgid "No covers found. Check the title and the author of the book, and the connection."
+msgstr "Nenhuma capa encontrada. Verifique o título e o autor do livro, e a conexão."
+
+msgid "%s, %d × %d px."
+msgstr "%s, %d × %d px."
+
+msgid "It is saved as the cover of this book only. The book file is not changed."
+msgstr "É salva como capa apenas deste livro. O arquivo do livro não é alterado."
+
+msgid "It replaces the custom cover the book has now."
+msgstr "Substitui a capa personalizada que o livro tem agora."
+
+msgid "Use this cover?"
+msgstr "Usar esta capa?"
+
+msgid "Use cover"
+msgstr "Usar capa"
+
+msgid "Use the book's own cover?"
+msgstr "Usar a capa do livro?"
+
+msgid "The custom cover is removed and the cover of the book itself comes back."
+msgstr "A capa personalizada é removida e volta a capa do próprio livro."
+
+msgid "Use the book's cover"
+msgstr "Usar a do livro"
+
+msgid "The book's own cover is back."
+msgstr "A capa do livro voltou."
+
+msgid "The cover could not be changed."
+msgstr "Não foi possível alterar a capa."
+
+msgid "The cover could not be saved."
+msgstr "Não foi possível salvar a capa."
+
+msgid "Cover changed."
+msgstr "Capa alterada."
+
+msgid "Search cancelled."
+msgstr "Busca cancelada."
+
+msgid "Failed: %s"
+msgstr "Falharam: %s"
+
+msgid "Some sources failed: %s"
+msgstr "Algumas fontes falharam: %s"
+
+msgid "Something went wrong with the covers."
+msgstr "Algo deu errado com as capas."
+
+msgid "The custom cover replaces the picture of the book's own cover, and is not kept apart any more."
+msgstr "A capa personalizada substitui a imagem da capa do próprio livro e não é mais guardada à parte."
+
+msgid "The cover picture could not be read."
+msgstr "Não foi possível ler a imagem da capa."
+
+msgid "The cover picture of the book was not found inside it."
+msgstr "A imagem da capa do livro não foi encontrada dentro dele."
+
+msgid "Amazon"
+msgstr "Amazon"
+
+msgid "Searching Amazon…"
+msgstr "Buscando na Amazon…"
+
+msgid "Tap to cancel"
+msgstr "Toque para cancelar"
+
+msgid "Search with other words"
+msgstr "Buscar com outras palavras"
+
+msgid "A title in another language, another author…"
+msgstr "Um título em outro idioma, outro autor…"
+
+msgid "Search covers"
+msgstr "Buscar capas"
+
+msgid "Title, author, another language…"
+msgstr "Título, autor, outro idioma…"
+
+msgid "Apple Books looks in the stores of several countries."
+msgstr "A Apple Books busca nas lojas de vários países."
+
+msgid "Choose from this device"
+msgstr "Escolher deste dispositivo"
+
+msgid "A JPG or PNG picture you already have"
+msgstr "Uma imagem JPG ou PNG que você já tenha"
+
+msgid "Choose an image"
+msgstr "Escolher uma imagem"
+
+msgid "Use image"
+msgstr "Usar imagem"
+
+msgid "No folders or images here."
+msgstr "Não há pastas nem imagens aqui."
+
+msgid "That file is not a JPG or PNG picture."
+msgstr "Esse arquivo não é uma imagem JPG ou PNG."
+
+msgid "No images"
+msgstr "Sem imagens"
+
+msgid "1 image"
+msgstr "1 imagem"
+
+msgid "%d images"
+msgstr "%d imagens"
+
+msgid "%d+ images"
+msgstr "%d+ imagens"
+
+msgid "%d × %d · %d KB"
+msgstr "%d × %d · %d KB"
+
+msgid "The title, authors, series (and its number), language, keywords, description, publisher, year, ISBN, pages and cover go back to what the book itself says."
+msgstr "O título, autores, série (e seu número), idioma, palavras-chave, descrição, editora, ano, ISBN, páginas e capa voltam ao que o próprio livro diz."
+
+msgid "More details"
+msgstr "Mais detalhes"
+
+msgid "Publisher"
+msgstr "Editora"
+
+msgid "Publication year"
+msgstr "Ano de publicação"
+
+msgid "ISBN"
+msgstr "ISBN"
+
+msgid "Four digits, like 2019"
+msgstr "Quatro dígitos, como 2019"
+
+msgid "10 or 13 digits"
+msgstr "10 ou 13 dígitos"
+
+msgid "Publisher, year and ISBN"
+msgstr "Editora, ano e ISBN"
+
+msgid "The year must have four digits."
+msgstr "O ano deve ter quatro dígitos."
+
+msgid "The ISBN must have 10 or 13 digits."
+msgstr "O ISBN deve ter 10 ou 13 dígitos."
+
+msgid "Publishers in your library"
+msgstr "Editoras da sua biblioteca"
+
+msgid "Asking %s…"
+msgstr "Consultando %s…"
+
+msgid "Pages of the edition, like 496"
+msgstr "Páginas da edição, como 496"
+
+msgid "%s pages"
+msgstr "%s páginas"
+
+msgid "The pages must be a whole number between 1 and 99999."
+msgstr "As páginas devem ser um número inteiro entre 1 e 99999."
+
+msgid "Stable pages: %d"
+msgstr "Páginas estáveis: %d"
+
+msgid "Stable pages: %d, the closest to %d that KOReader allows"
+msgstr "Páginas estáveis: %d, o mais perto de %d que o KOReader permite"
+
+msgid "The book needs a title to search online."
+msgstr "O livro precisa de um título para ser buscado na internet."
+
+msgid "Nothing found online for %s."
+msgstr "Nada encontrado na internet para %s."
+
+msgid "Found online"
+msgstr "Encontrado na internet"
+
+msgid "Search again"
+msgstr "Buscar de novo"
+
+msgid "Use"
+msgstr "Usar"
+
+msgid "%d characters"
+msgstr "%d caracteres"
+
+msgid "first published"
+msgstr "primeira publicação"
+
+msgid "median of its editions"
+msgstr "mediana das suas edições"
+
+msgid "Stable pages"
+msgstr "Páginas estáveis"
+
+msgid "Stable pages (%d pages)"
+msgstr "Páginas estáveis (%d páginas)"
+
+msgid "The setting could not be saved."
+msgstr "Não foi possível salvar o ajuste."
+
+msgid "Saved. The stable pages are set when the book opens."
+msgstr "Salvo. As páginas estáveis são calculadas ao abrir o livro."
+
+msgid "The stable pages could not be set."
+msgstr "Não foi possível calcular as páginas estáveis."
+
+msgid "KOReader would not replace the publisher's page numbers."
+msgstr "O KOReader não quis substituir a numeração da editora."
+
+msgid "No page count in Metadata."
+msgstr "Não há número de páginas nos Metadados."
+
+msgid "Use metadata page count"
+msgstr "Usar o número de páginas dos Metadados"
+
+msgid "Use KOReader's numbering"
+msgstr "Usar a numeração do KOReader"
+
+msgid "Use metadata page count: %d"
+msgstr "Usar o número de páginas dos Metadados: %d"
+
+msgid "Replaces the publisher's page numbers, if the book has them."
+msgstr "Substitui a numeração da editora, se o livro a trouxer."
+
+msgid "Its own count, or the publisher's if the book has them"
+msgstr "A contagem própria dele, ou a da editora se o livro a trouxer"
+
+msgid "Stable pages are off for this book."
+msgstr "As páginas estáveis estão desativadas neste livro."
+
+msgid "Stable pages are on, with KOReader's numbering."
+msgstr "Páginas estáveis ativadas, com a numeração do KOReader."
+
+msgid "Stable pages are on, with KOReader's numbering. It changes when the book is opened again."
+msgstr "Páginas estáveis ativadas, com a numeração do KOReader. Muda quando o livro for aberto de novo."
+
+msgid "The book was closed. It opens with KOReader's numbering."
+msgstr "O livro foi fechado. Ele abre com a numeração do KOReader."
+
+msgid "KOReader's numbering: %d stable pages."
+msgstr "Numeração do KOReader: %d páginas estáveis."
+
+msgid "Page numbers that stay the same whatever the font size, as in a printed book."
+msgstr "Números de página que não mudam com o tamanho da fonte, como em um livro impresso."
+
+msgid "Stable pages in all books"
+msgstr "Páginas estáveis em todos os livros"
+
+msgid "Every book you open will show stable pages: the page numbers and the total no longer change with the font size. Books you are already reading may show a different page number and total. Nothing is deleted. To change one book, use Edit > Book settings > Stable pages."
+msgstr "Todos os livros que você abrir mostrarão páginas estáveis: os números de página e o total deixam de mudar com o tamanho da fonte. Os livros que você já está lendo podem mostrar outro número de página e outro total. Nada é apagado. Para mudar um só livro, use Editar > Configurações do livro > Páginas estáveis."
+
+msgid "Turn on"
+msgstr "Ativar"
+
+msgid "Off"
+msgstr "Desativado"
+
+msgid "KOReader numbering"
+msgstr "Numeração do KOReader"
+
+msgid "Metadata page count (or KOReader's)"
+msgstr "Número de páginas dos Metadados (ou o do KOReader)"
+
+msgid "Pages change with the font size"
+msgstr "As páginas mudam com o tamanho da fonte"
+
+msgid "No Pages in Metadata: KOReader's numbering is used"
+msgstr "Sem páginas nos Metadados: usa-se a numeração do KOReader"
+
+
+msgid "Off: stable pages off in every book. KOReader numbering: every book shows stable pages, with KOReader's own count. Metadata page count: books with Pages in Metadata > More details use that number, the others use KOReader's. With no choice made, KiKome follows KOReader's own setting. A book can have its own choice."
+msgstr "Desativado: sem páginas estáveis em todos os livros. Numeração do KOReader: todos os livros mostram páginas estáveis, com a contagem própria do KOReader. Número de páginas dos Metadados: os livros com Páginas em Metadados > Mais detalhes usam esse número, os demais usam o do KOReader. Se você não escolheu nada, o KiKome segue o ajuste próprio do KOReader. Um livro pode ter a sua própria escolha."
+
+msgid "Bold: in use now. Dot: your choice, for all books; tap it again to follow KOReader's setting."
+msgstr "Negrito: o que está em uso agora. Ponto: a sua escolha, para todos os livros; toque de novo para seguir o ajuste do KOReader."
