@@ -1,7 +1,8 @@
 -- main.lua — KiKome (internal module name: kobold)
 -- Plugin entry point. Adds a "KiKome" entry to the file browser main menu
 -- and a "KiKome" option to the "Start with" menu. When that option is
--- selected, KiKome opens once at boot. Nothing else is changed.
+-- selected, KiKome opens right away, and again at every boot. Nothing else is
+-- changed.
 
 -- The plugin's facts live in _meta.lua (the file KOReader also reads). The
 -- rest of KiKome asks for them as require("kobold.meta"); this points that
@@ -23,6 +24,15 @@ local boot_handled = false  -- set once per KOReader session, on the file browse
 local Kobold = WidgetContainer:extend{
     name = "kobold",
 }
+
+-- True when a KiKome screen (Home, My Books, ...) is already in the window stack.
+local function koboldScreenShown()
+    for _i, entry in ipairs(UIManager._window_stack or {}) do
+        local w = entry.widget
+        if w and w.kobold_tab then return true end
+    end
+    return false
+end
 
 -- Adds the "KiKome" radio item to the "Start with" submenu. Patched once
 -- per session. The native items are left untouched; each radio item reads the
@@ -51,8 +61,23 @@ local function patchStartWithMenu()
             checked_func = function()
                 return G_reader_settings:readSetting("start_with") == START_WITH_VALUE
             end,
-            callback = function()
+            callback = function(touchmenu_instance)
                 G_reader_settings:saveSetting("start_with", START_WITH_VALUE)
+                G_reader_settings:flush()
+                -- Takes effect now, without restarting KOReader (as Bookshelf does):
+                -- the menu closes first (a radio item does not close it by itself,
+                -- and a screen shown above it would leave it orphaned in the stack),
+                -- then KiKome opens over the file browser. Books opened from it
+                -- then return to it, as after a restart.
+                if touchmenu_instance and touchmenu_instance.closeMenu then
+                    pcall(function() touchmenu_instance:closeMenu() end)
+                end
+                if not koboldScreenShown() then
+                    local plugin = fmm_self and fmm_self.ui and fmm_self.ui.kobold
+                    if plugin and plugin.showHome then
+                        pcall(function() plugin:showHome() end)
+                    end
+                end
             end,
             radio = true,
         })
@@ -303,6 +328,25 @@ end
 -- The reader menu has built its items by now (or is about to be shown).
 function Kobold:onReaderReady()
     self:_wireFastFileBrowserTab(true)
+    -- A book whose page count was put in Metadata > More details gets KOReader's
+    -- stable page numbers made to match it (see kobold/data/stable_pages.lua).
+    -- Unless the book was set to KOReader's numbering (Edit > Book settings >
+    -- Stable pages): apply() does nothing then. A moment later, when the book
+    -- has finished laying itself out; a failure is only logged.
+    do
+        local ui = self.ui
+        UIManager:scheduleIn(0.8, function()
+            if not (ui and ui.document) then return end
+            local ok, status, size, _chars, changed = pcall(function()
+                return require("kobold.data.stable_pages").apply(ui)
+            end)
+            if not ok then
+                require("logger").warn("KiKome: stable pages failed:", tostring(status))
+            elseif changed then
+                require("kobold.data.stable_pages").announce(ui, status, size)
+            end
+        end)
+    end
     -- "Show in book" from the annotations list of Book Details: the book is
     -- open now, so it can jump to the annotation it was opened for.
     local Reader = package.loaded["kobold.ui.reader"]
@@ -313,16 +357,20 @@ function Kobold:onShowReaderMenu()
     UIManager:nextTick(function() self:_wireFastFileBrowserTab(true) end)
 end
 
--- KiKome's own tab in the file browser's top menu bar, like Bookshelf's: its
--- icon sits next to the others, and its two entries are the rows inside it.
--- The tab is placed by _extendMenuOrder (below), right after the file browser's
--- Settings tab, so it is not buried in the Tools tab.
+-- KiKome's entry in KOReader's menu. The two entries are the same everywhere.
+--   File browser: KiKome's own tab in the top menu bar, like Bookshelf's: its icon
+--   sits next to the others and the two entries are the rows inside it. The tab is
+--   placed by _extendMenuOrder (below), right after the file browser's Settings
+--   tab, so it is not buried in the Tools tab.
+--   In a book: one row, "KiKome", at the top of the Tools tab, that opens a submenu
+--   with the two entries (not inside More tools). It has a `sorting_hint`: an entry
+--   without one is placed nowhere, and KOReader drops it, marked "NEW:", into the
+--   first tab of the menu. The reader menu has no order of ours for the tab.
 function Kobold:addToMainMenu(menu_items)
-    menu_items.kobold_tab = { icon = "book.opened", text = _("KiKome") }
     -- Unicode icons (a glyph from the icon font, as Bookshelf draws its own
     -- status icons), not SVG files: the row text is drawn with the font, so
     -- no image loading is involved.
-    menu_items.kobold_open = {
+    local open_item = {
         text = "\xee\xb3\x99  " .. _("Open KiKome Home"),
         -- the divider: a line under this row, between the two entries
         separator = true,
@@ -330,12 +378,25 @@ function Kobold:addToMainMenu(menu_items)
             self:showHome()
         end,
     }
-    menu_items.kobold_configurations = {
+    local config_item = {
         text = "⚙ " .. _("Configurations"),
         callback = function()
             require("kobold.ui.settings").show()
         end,
     }
+
+    if self.ui and self.ui.document then
+        menu_items.kobold = {
+            text = _("KiKome"),
+            sorting_hint = "tools",
+            sub_item_table = { open_item, config_item },
+        }
+        return
+    end
+
+    menu_items.kobold_tab = { icon = "book.opened", text = _("KiKome") }
+    menu_items.kobold_open = open_item
+    menu_items.kobold_configurations = config_item
 end
 
 -- Puts the KiKome tab into the file browser's top menu bar, in the order
