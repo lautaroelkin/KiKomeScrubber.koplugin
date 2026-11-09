@@ -10,6 +10,7 @@
 --
 --   EpubWriter.isEpub(path)                  true for a .epub file
 --   EpubWriter.backupPath(path)              where the copy of the old file is kept
+--   EpubWriter.readInfo(path)                -> { publisher, year, isbn } the book says (each may be nil), or nil
 --   EpubWriter.rewrite(path, changes, opts)  -> true, backup_path (nil with no backup)   |   false, "why"
 --                                            opts.backup = false: no copy of the old file is kept
 --
@@ -20,7 +21,12 @@
 --   subjects     { "word", ... }     replaces every keyword (dc:subject)
 --   description  string
 --   language     string
+--   publisher    string              (dc:publisher)
+--   year         "2019"              (dc:date: a date that already has this year is left as it is)
+--   isbn         "9788420412146"     (the dc:identifier that holds an ISBN, or a new one: urn:isbn:...)
 --   series       string              with series_index (number or text, optional)
+--   remove_series true               takes the series out
+--   cover_file   "/path/cover.jpg"   a picture (jpg or png) that becomes the book's cover
 --
 -- The book is repacked into a temporary file first, that file is checked
 -- (the mimetype comes first, the OPF reads), the old file is copied beside it
@@ -184,6 +190,49 @@ local function same_list(a, b)
     return true
 end
 
+-- An ISBN-10 or ISBN-13 in an identifier ("urn:isbn:978-84-...", "isbn 8420..."),
+-- upper case and with no hyphens, or nil.
+local function isbn_of(text)
+    local plain = tostring(text):lower()
+    plain = plain:gsub("^%s*urn:isbn:", "")
+    plain = plain:gsub("[%s%-]", "")
+    plain = plain:gsub("^isbn:?", "")
+    if plain:match("^97[89]%d%d%d%d%d%d%d%d%d%d$") or plain:match("^%d%d%d%d%d%d%d%d%d[%dx]$") then
+        return plain:upper()
+    end
+    return nil
+end
+
+-- The identifier that already holds an ISBN gets the new one (keeping its
+-- "urn:isbn:" when it had it); a book with none gets a new identifier.
+local function set_isbn(metadata, prefix, isbn)
+    for _i, el in ipairs(child_elements(metadata)) do
+        if is_dc(el, "identifier") then
+            local text = get_text(el)
+            local own = isbn_of(text)
+            if own then
+                if own ~= isbn then
+                    local urn = text:lower():match("^%s*urn:isbn:") and "urn:isbn:" or ""
+                    set_text(el, urn .. isbn)
+                end
+                return
+            end
+        end
+    end
+    append_child(metadata, new_element("identifier", prefix, nil, "urn:isbn:" .. isbn))
+end
+
+-- Only the year changes: a date that already says this year keeps its month and day.
+local function set_year(metadata, prefix, year)
+    for _i, el in ipairs(child_elements(metadata)) do
+        if is_dc(el, "date") then
+            if get_text(el):match("^%s*(%d%d%d%d)") ~= year then set_text(el, year) end
+            return
+        end
+    end
+    append_child(metadata, new_element("date", prefix, nil, year))
+end
+
 local function set_dc_text(metadata, localname, prefix, value)
     for _i, el in ipairs(child_elements(metadata)) do
         if is_dc(el, localname) then
@@ -298,11 +347,103 @@ local function set_epub3_series(metadata, series, series_index)
     end
 end
 
+-- Takes the series out: Calibre's two metas and EPUB 3's series collection
+-- (with everything that refines it).
+local function remove_series(metadata)
+    remove_meta(metadata, function(el)
+        local name = attr_get(el, "name")
+        return name == "calibre:series" or name == "calibre:series_index"
+    end)
+    local guard = 0
+    local coll = find_series_collection(metadata)
+    while coll and guard < 10 do
+        guard = guard + 1
+        local id = attr_get(coll, "id")
+        if id and id ~= "" then
+            remove_meta(metadata, function(el)
+                return attr_get(el, "refines") == "#" .. id
+            end)
+        end
+        remove_meta(metadata, function(el) return el == coll end)
+        coll = find_series_collection(metadata)
+    end
+end
+
 -- ── Reading and editing the OPF ─────────────────────────────────────────────
 
 local function opf_path_from_container(container)
     return container:match('full%-path%s*=%s*"([^"]+)"')
         or container:match("full%-path%s*=%s*'([^']+)'")
+end
+
+-- ── The cover ───────────────────────────────────────────────────────────────
+
+local function has_token(value, token)
+    if type(value) ~= "string" then return false end
+    for word in value:gmatch("%S+") do
+        if word == token then return true end
+    end
+    return false
+end
+
+-- The manifest item that is the cover picture of the OPF (EPUB 3's
+-- properties="cover-image", else EPUB 2's <meta name="cover" content="id">,
+-- else an image item whose id says "cover"), with the manifest itself.
+local function find_cover_item(doc, metadata)
+    local pkg = doc.root
+    local manifest
+    for _i, el in ipairs(child_elements(pkg)) do
+        if el.name == "manifest" then manifest = el break end
+    end
+    if not manifest then return nil end
+    local items = {}
+    for _i, el in ipairs(child_elements(manifest)) do
+        if el.name == "item" then items[#items + 1] = el end
+    end
+    for _i, it in ipairs(items) do
+        if has_token(attr_get(it, "properties"), "cover-image") then return it, manifest end
+    end
+    local meta = find_meta(metadata, function(m) return attr_get(m, "name") == "cover" end)
+    local wanted = meta and attr_get(meta, "content")
+    if wanted then
+        for _i, it in ipairs(items) do
+            if attr_get(it, "id") == wanted then
+                local mt = attr_get(it, "media-type") or ""
+                if mt:find("^image/") then return it, manifest end
+            end
+        end
+    end
+    for _i, it in ipairs(items) do
+        local id = (attr_get(it, "id") or ""):lower()
+        local mt = attr_get(it, "media-type") or ""
+        if mt:find("^image/") and (id == "cover" or id == "cover-image" or id == "coverimage") then
+            return it, manifest
+        end
+    end
+    return nil, manifest
+end
+
+local function url_decode(s)
+    return (s:gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end))
+end
+
+-- "OEBPS/content.opf" + "Images/cover.jpg" -> "OEBPS/Images/cover.jpg"
+local function join_zip_path(opf_path, href)
+    href = url_decode((href:gsub("#.*$", "")))
+    local dir = opf_path:match("^(.*)/[^/]*$") or ""
+    local parts = {}
+    for seg in ((dir ~= "" and (dir .. "/") or "") .. href):gmatch("[^/]+") do
+        if seg == ".." then parts[#parts] = nil
+        elseif seg ~= "." then parts[#parts + 1] = seg end
+    end
+    return table.concat(parts, "/")
+end
+
+local function cover_kind(bytes)
+    if type(bytes) ~= "string" then return nil end
+    if bytes:sub(1, 3) == "\255\216\255" then return "jpg", "image/jpeg" end
+    if bytes:sub(1, 4) == "\137PNG" then return "png", "image/png" end
+    return nil
 end
 
 local function parse_metadata(opf_xml)
@@ -336,10 +477,40 @@ local function extract_named(path, names)
     return out
 end
 
-local function edit_opf(opf_xml, changes)
+local function edit_opf(opf_xml, changes, cover_plan)
     local doc, metadata, err = parse_metadata(opf_xml)
     if not metadata then return nil, err end
     local prefix = detect_dc_prefix(metadata)
+
+    if cover_plan then
+        if cover_plan.item_id then
+            -- the book's own cover item keeps its place and name: only the type may change
+            local it = nil
+            local _, manifest = find_cover_item(doc, metadata)
+            if manifest then
+                for _i, el in ipairs(child_elements(manifest)) do
+                    if el.name == "item" and attr_get(el, "id") == cover_plan.item_id then it = el end
+                end
+            end
+            if it and cover_plan.media_type then attr_set(it, "media-type", cover_plan.media_type) end
+        elseif cover_plan.new_href then
+            -- the book had no cover: one is added
+            local _, manifest = find_cover_item(doc, metadata)
+            if manifest then
+                append_child(manifest, new_element("item", manifest.nsPrefix, {
+                    { "id", "kikome-cover" },
+                    { "href", cover_plan.new_href },
+                    { "media-type", cover_plan.media_type },
+                    { "properties", "cover-image" },
+                }))
+                remove_meta(metadata, function(m) return attr_get(m, "name") == "cover" end)
+                append_child(metadata, new_element("meta", metadata.nsPrefix, {
+                    { "name", "cover" },
+                    { "content", "kikome-cover" },
+                }))
+            end
+        end
+    end
 
     if changes.title ~= nil and changes.title ~= "" then
         set_dc_text(metadata, "title", prefix, changes.title)
@@ -356,7 +527,18 @@ local function edit_opf(opf_xml, changes)
     if changes.language ~= nil and changes.language ~= "" then
         set_dc_text(metadata, "language", prefix, changes.language)
     end
-    if changes.series ~= nil and changes.series ~= "" then
+    if changes.publisher ~= nil and changes.publisher ~= "" then
+        set_dc_text(metadata, "publisher", prefix, changes.publisher)
+    end
+    if changes.year ~= nil and changes.year ~= "" then
+        set_year(metadata, prefix, changes.year)
+    end
+    if changes.isbn ~= nil and changes.isbn ~= "" then
+        set_isbn(metadata, prefix, changes.isbn)
+    end
+    if changes.remove_series then
+        remove_series(metadata)
+    elseif changes.series ~= nil and changes.series ~= "" then
         set_calibre_series(metadata, changes.series, changes.series_index)
         set_epub3_series(metadata, changes.series, changes.series_index)
     end
@@ -366,6 +548,34 @@ local function edit_opf(opf_xml, changes)
         return nil, _("Could not write the edited OPF.")
     end
     return out
+end
+
+-- What the book itself says about its publisher, year and ISBN (they are not
+-- among the properties KOReader reads). nil when it cannot be read.
+function EpubWriter.readInfo(path)
+    if not EpubWriter.isEpub(path) then return nil end
+    local got = extract_named(path, { ["META-INF/container.xml"] = true })
+    local container = got and got["META-INF/container.xml"]
+    local opf_path = container and opf_path_from_container(container)
+    if not opf_path then return nil end
+    local only = extract_named(path, { [opf_path] = true })
+    local opf_text = only and only[opf_path]
+    if not opf_text then return nil end
+    local doc, metadata = parse_metadata(opf_text)
+    if not doc then return nil end
+    local info = {}
+    local publisher = dc_texts(metadata, "publisher")[1]
+    if publisher then
+        publisher = publisher:match("^%s*(.-)%s*$")
+        if publisher ~= "" then info.publisher = publisher end
+    end
+    local date = dc_texts(metadata, "date")[1]
+    if date then info.year = date:match("(%d%d%d%d)") end
+    for _i, text in ipairs(dc_texts(metadata, "identifier")) do
+        local isbn = isbn_of(text)
+        if isbn then info.isbn = isbn break end
+    end
+    return info
 end
 
 -- ── Repacking ───────────────────────────────────────────────────────────────
@@ -425,6 +635,31 @@ function EpubWriter.rewrite(path, changes, opts)
     local opf_path = opf_path_from_container(container)
     if not opf_path then return false, _("Could not find the OPF in the book.") end
 
+    -- A new cover: where it goes in the zip is found in the OPF before anything is repacked.
+    local cover_bytes, cover_plan, cover_zip_path
+    if changes.cover_file then
+        local f = io.open(changes.cover_file, "rb")
+        cover_bytes = f and f:read("*a")
+        if f then f:close() end
+        local ext, mime = cover_kind(cover_bytes)
+        if not ext then return false, _("The cover picture could not be read.") end
+        local opf_only = extract_named(path, { [opf_path] = true })
+        local opf_text = opf_only and opf_only[opf_path]
+        if not opf_text then return false, _("Could not find the OPF in the book.") end
+        local doc, metadata, perr = parse_metadata(opf_text)
+        if not doc then return false, perr end
+        local item = find_cover_item(doc, metadata)
+        if item and attr_get(item, "href") then
+            cover_zip_path = join_zip_path(opf_path, attr_get(item, "href"))
+            cover_plan = { item_id = attr_get(item, "id"), media_type = mime }
+        else
+            local dir = opf_path:match("^(.*)/[^/]*$")
+            local name = "kikome_cover." .. ext
+            cover_zip_path = (dir and dir ~= "") and (dir .. "/" .. name) or name
+            cover_plan = { new_href = name, media_type = mime }
+        end
+    end
+
     local reader = open_reader(path)
     if not reader then return false, _("Could not open the EPUB.") end
 
@@ -446,9 +681,14 @@ function EpubWriter.rewrite(path, changes, opts)
     for entry in reader:iterate() do
         if entry.path ~= "mimetype" and not edit_err then
             local content = reader:extractToMemory(entry.path)
+            if cover_bytes and entry.path == cover_zip_path then
+                content = cover_bytes   -- the old picture is replaced
+                cover_zip_path = nil    -- (so it is not added again below)
+                cover_plan.written = true
+            end
             if content then
                 if entry.path == opf_path then
-                    local edited, e = edit_opf(content, changes)
+                    local edited, e = edit_opf(content, changes, cover_plan)
                     if edited then
                         content = edited
                         wrote_opf = true
@@ -461,9 +701,16 @@ function EpubWriter.rewrite(path, changes, opts)
             end
         end
     end
+    -- a book that had no cover picture gets the new one added
+    if cover_bytes and cover_zip_path and cover_plan and cover_plan.new_href and not edit_err then
+        writer:addFileFromMemory(cover_zip_path, cover_bytes)
+    end
     writer:close()
     reader:close()
 
+    if not edit_err and cover_bytes and cover_plan and cover_plan.item_id and not cover_plan.written then
+        edit_err = _("The cover picture of the book was not found inside it.")
+    end
     if edit_err then
         os.remove(tmp)
         return false, edit_err

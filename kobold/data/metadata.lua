@@ -14,10 +14,14 @@
 --   Metadata.FIELDS                      the keys, in the order the screen lists them
 --   Metadata.custom(file)                -> { key = value } of what is corrected now
 --   Metadata.originals(file)             -> { key = value } the book's own values, if known
+--   Metadata.extraOriginals(file)        -> { publisher, year, isbn } the book's own (read from the EPUB,
+--                                           kept while the file does not change); {} for other formats
 --   Metadata.set(file, key, value, base) value "" puts the original back;
 --                                        `base` (the book's props, optional) is the
 --                                        copy of the originals when the file is made
---   Metadata.setMany(file, values, base) several keys in one save ({ key = value }, "" clears one)
+--   Metadata.setMany(file, values, base) several keys in one save ({ key = value }, "" clears one);
+--                                        Metadata.BLANK as a value leaves that key EMPTY on purpose
+--                                        (the book's own value does not come back: "no series")
 --   Metadata.restore(file, key)          the original comes back for that key
 --   Metadata.restoreAll(file)            ... for every key
 --   Metadata.knownSeries()               -> { { name, count } } the series already in the library
@@ -44,6 +48,7 @@ local Metadata = {}
 
 Metadata.FIELDS = {
     "title", "authors", "series", "series_index", "language", "keywords", "description",
+    "publisher", "year", "isbn", "pages",   -- the "More details" of the screen
 }
 
 local function isField(key)
@@ -111,6 +116,25 @@ function Metadata.originals(file)
     return {}
 end
 
+-- The publisher, year and ISBN of the book itself. KOReader does not read them,
+-- so they come from the EPUB's own OPF (see epub_writer.lua). Read once for a
+-- file as it is (its size and date): a book that was rewritten is read again.
+local extra_cache = {}
+
+function Metadata.extraOriginals(file)
+    local lfs = require("libs/libkoreader-lfs")
+    local stamp = tostring(lfs.attributes(file, "modification")) .. ":" .. tostring(lfs.attributes(file, "size"))
+    local hit = extra_cache[file]
+    if hit and hit.stamp == stamp then return hit.info end
+    local info = {}
+    if Metadata.isEpub(file) then
+        local ok, got = pcall(function() return require("kobold.data.epub_writer").readInfo(file) end)
+        if ok and type(got) == "table" then info = got end
+    end
+    extra_cache[file] = { stamp = stamp, info = info }
+    return info
+end
+
 -- Opens the custom metadata (making it, with the copy of the originals, when
 -- the book has none), lets `mutate` change its custom_props, and saves. A
 -- file left with no corrections is deleted.
@@ -153,6 +177,10 @@ function Metadata.restoreAll(file)
     end)
 end
 
+-- A value for setMany: the key is saved as an empty text, so it shows as empty
+-- (a book with no series) instead of falling back to what the book says.
+Metadata.BLANK = {}
+
 function Metadata.set(file, key, value, base)
     if not isField(key) then return false end
     if key == "series_index" and value ~= nil and value ~= "" then
@@ -169,18 +197,25 @@ function Metadata.setMany(file, values, base)
     local clean, any = {}, false
     for key, value in pairs(values) do
         if not isField(key) then return false end
-        if key == "series_index" and value ~= nil and value ~= "" then
-            value = tonumber(value)
-            if not value then return false end
+        if value == Metadata.BLANK then
+            clean[key] = Metadata.BLANK
+            any = true
+        else
+            if key == "series_index" and value ~= nil and value ~= "" then
+                value = tonumber(value)
+                if not value then return false end
+            end
+            if value == nil then value = "" end
+            clean[key] = value
+            if value ~= "" then any = true end
         end
-        if value == nil then value = "" end
-        clean[key] = value
-        if value ~= "" then any = true end
     end
     if not any and not customPath(file) then return true end   -- nothing was corrected
     return save(file, function(custom)
         for key, value in pairs(clean) do
-            if value == "" then custom[key] = nil else custom[key] = value end
+            if value == Metadata.BLANK then custom[key] = ""
+            elseif value == "" then custom[key] = nil
+            else custom[key] = value end
         end
     end, base)
 end
@@ -387,9 +422,15 @@ function Metadata.bookChanges(file)
             keys[#keys + 1] = "authors"
         end
     end
+    -- A series emptied on purpose: it is taken out of the EPUB.
+    local series_blank = (custom.series == "")
+    if series_blank then
+        changes.remove_series = true
+        keys[#keys + 1] = "series"
+    end
     -- The number alone (the series left as the book has it) still needs the
     -- series' name to be written: it comes from the book's own values.
-    if filled(custom.series) or filled(custom.series_index) then
+    if not series_blank and (filled(custom.series) or filled(custom.series_index)) then
         local own = Metadata.originals(file)
         local name = filled(custom.series) and custom.series or own.series
         local index = filled(custom.series_index) and custom.series_index or own.series_index
@@ -422,6 +463,24 @@ function Metadata.bookChanges(file)
         changes.description = tostring(custom.description)
         keys[#keys + 1] = "description"
     end
+    if filled(custom.publisher) then
+        changes.publisher = trimmed(custom.publisher)
+        keys[#keys + 1] = "publisher"
+    end
+    if filled(custom.year) then
+        changes.year = trimmed(custom.year)
+        keys[#keys + 1] = "year"
+    end
+    if filled(custom.isbn) then
+        changes.isbn = trimmed(custom.isbn)
+        keys[#keys + 1] = "isbn"
+    end
+    -- A custom cover goes into the EPUB too (it replaces the book's own picture).
+    local cover = Metadata.customCover(file)
+    if cover then
+        changes.cover_file = cover
+        keys[#keys + 1] = "cover"
+    end
     if #keys == 0 then return nil end
     return changes, keys
 end
@@ -439,6 +498,7 @@ local function refreshSidecarProps(file, custom)
         for _i, k in ipairs(Metadata.FIELDS) do
             if filled(custom[k]) then props[k] = custom[k] end
         end
+        if custom.series == "" then props.series = nil; props.series_index = nil end
         if filled(custom.title) and props.display_title ~= nil then props.display_title = custom.title end
         ds:saveSetting("doc_props", props)
         ds:flush()
@@ -470,6 +530,16 @@ function Metadata.writeToBook(file, opts)
     if refreshSidecarProps(file, custom) then
         local path = customPath(file)
         if path then os.remove(path) end
+    end
+    -- the number of pages is not something an EPUB can hold: it stays as a
+    -- correction of KiKome, the only thing that is left after the rest went in
+    if filled(custom.pages) then
+        save(file, function(c) c.pages = custom.pages end, {})
+    end
+    -- the book holds the cover itself now: the custom one is not needed any more
+    if changes.cover_file then
+        local ok_c, CoverOnline = pcall(require, "kobold.data.cover_online")
+        if ok_c and CoverOnline then pcall(CoverOnline.revert, file) end
     end
     return true, result
 end

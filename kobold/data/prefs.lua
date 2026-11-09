@@ -42,6 +42,10 @@ local DEFAULTS = {
     clock_pattern      = "%K, %a %e %b", -- the custom layout
     open_tap           = "koreader",     -- "koreader", "single" or "double"
     hot_park           = true,           -- leaving a book keeps it open under KiKome (see park.lua)
+    -- Stable pages: "stable_pages_mode" is "off", "koreader" or "metadata" (see data/stable_pages.lua).
+    -- It has no default here on purpose: with none chosen yet, Settings shows KOReader's own switch
+    -- (Default settings for new books > use stable page numbers), or what the older switch below said.
+    stable_pages       = false,          -- older switch (Metadata page count on / off), taken over by stable_pages_mode
 }
 
 -- The settings behind the reading stats popup, for its reset button.
