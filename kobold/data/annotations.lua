@@ -301,4 +301,62 @@ function Annotations.resolveColor(name)
     return c
 end
 
+-- ── Pale colours ────────────────────────────────────────────────────────────
+-- The same hue as highlight `name` but light (lightness 0.86, the shade the
+-- buttons of the Current book card use), for the pill behind a quote in the
+-- list. Falls back to resolveColor when the colour cannot be worked out.
+local function rgbToHls(r, g, b)
+    local maxc, minc = math.max(r, g, b), math.min(r, g, b)
+    local l = (minc + maxc) / 2
+    if maxc == minc then return 0, l, 0 end
+    local d = maxc - minc
+    local sat = l <= 0.5 and d / (maxc + minc) or d / (2 - maxc - minc)
+    local rc, gc, bc = (maxc - r) / d, (maxc - g) / d, (maxc - b) / d
+    local h
+    if r == maxc then h = bc - gc
+    elseif g == maxc then h = 2 + rc - bc
+    else h = 4 + gc - rc end
+    return (h / 6) % 1, l, sat
+end
+
+local function hueValue(m1, m2, hue)
+    hue = hue % 1
+    if hue < 1 / 6 then return m1 + (m2 - m1) * hue * 6 end
+    if hue < 0.5 then return m2 end
+    if hue < 2 / 3 then return m1 + (m2 - m1) * (2 / 3 - hue) * 6 end
+    return m1
+end
+
+local function hlsToRgb(h, l, sat)
+    if sat == 0 then return l, l, l end
+    local m2 = l <= 0.5 and l * (1 + sat) or l + sat - l * sat
+    local m1 = 2 * l - m2
+    return hueValue(m1, m2, h + 1 / 3), hueValue(m1, m2, h), hueValue(m1, m2, h - 1 / 3)
+end
+
+local pale_cache = {}
+
+function Annotations.paleColor(name)
+    name = name or "yellow"
+    local night = false
+    pcall(function() night = require("device").screen.night_mode and true or false end)
+    local key = name .. (night and "|n" or "")
+    if pale_cache[key] then return pale_cache[key] end
+    local base = Annotations.resolveColor(name)
+    local out
+    local ok = pcall(function()
+        local c = base:getColorRGB32()
+        local h, _l, sat = rgbToHls(c.r / 255, c.g / 255, c.b / 255)
+        if sat > 0.05 then sat = math.min(0.75, math.max(0.45, sat)) else sat = 0 end
+        -- night mode inverts the screen: turn the hue half way round (as the buttons do)
+        if night then h = (h + 0.5) % 1 end
+        local r, g, b = hlsToRgb(h, 0.86, sat)
+        local function byte(v) return math.max(0, math.min(255, math.floor(v * 255 + 0.5))) end
+        out = Blitbuffer.ColorRGB32(byte(r), byte(g), byte(b), 0xFF)
+    end)
+    out = (ok and out) or base
+    pale_cache[key] = out
+    return out
+end
+
 return Annotations

@@ -201,6 +201,7 @@ function KoboldLibrary.getDocInfo(file)
     local props = ds:readSetting("doc_props")
     local pages = ds:readSetting("doc_pages")
     local md5 = ds:readSetting("partial_md5_checksum")
+    local chapter_left = ds:readSetting("kikome_chapter_left")   -- see chapter_left.lua
     pcall(function() ds:close() end)
     -- Corrections made in KOReader's Book information are kept apart from
     -- the book, in custom_metadata.lua; they win over the book's own.
@@ -224,6 +225,7 @@ function KoboldLibrary.getDocInfo(file)
         series_index = type(props) == "table" and props.series_index or nil,
         pages = type(pages) == "number" and pages or nil,
         md5 = type(md5) == "string" and md5 or nil,
+        chapter_left = type(chapter_left) == "table" and chapter_left or nil,
     }
 end
 

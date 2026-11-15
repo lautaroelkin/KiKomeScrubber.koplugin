@@ -1,6 +1,7 @@
 -- kobold/data/chips.lua — KiKome
 -- The chips along the top of the Home shelf: their order, which are on, and
--- the folder and collection chips the reader added. Stored in G_reader_settings, so the
+-- the folder and collection chips the reader added (and the built-in Actions chip,
+-- off until it is turned on in Settings > Shelves). Stored in G_reader_settings, so the
 -- shelf (library_shelf.lua) and Settings > Shelves read the same list.
 --
 --   Chips.list()            every chip, in order (on and off)
@@ -41,13 +42,16 @@ local BUILTIN = {
     folders = _("Home"), home = _("Library"), series = _("Series"),
     authors = _("Authors"), collections = _("Collections"),
     favorites = _("Favorites"), tbr = _("To be read"), genres = _("Genres"),
+    actions = _("Actions"),
 }
-local BUILTIN_ORDER = { "folders", "home", "series", "authors", "collections", "favorites", "tbr", "genres" }
+local BUILTIN_ORDER = { "folders", "home", "series", "authors", "collections", "favorites", "tbr", "genres", "actions" }
 
 -- Built-in chips that start off: Favorites and To be read show one KOReader
 -- collection each, which is also listed under Collections (see collectionShown
--- below); Genres groups the books by their keywords, as the Library's Genres tab.
-local DEFAULT_OFF = { favorites = true, tbr = true, genres = true }
+-- below); Genres groups the books by their keywords, as the Library's Genres tab;
+-- Actions shows the reader's own custom actions as tiles (data/custom_actions.lua,
+-- drawn by library_shelf.lua).
+local DEFAULT_OFF = { favorites = true, tbr = true, genres = true, actions = true }
 
 -- Whether Favorites / To be read are listed inside the Collections chip.
 local SHOWN_KEY = "kikome_shelf_collections_shown"
@@ -289,12 +293,40 @@ end
 
 local LIB_SHOWN_KEY = "kikome_library_collections_shown"
 
+-- The `kind` of the "Uncollected" list in the two "shown" tables above.
+-- It is not a collection, only a list of the books that are in none; it is on
+-- by default, like Favorites and To be read.
+M.NO_COLLECTION = "none"
+
+-- The books (a list of file paths) that are in no collection at all. Favorites
+-- and To be read count as collections, hidden or not. `files` is the list to
+-- pick from.
+function M.filesWithoutCollection(RC, files)
+    local out = {}
+    if not (RC and type(RC.coll) == "table") then return out end
+    local inside = {}
+    for _name, items in pairs(RC.coll) do
+        if type(items) == "table" then
+            for file, item in pairs(items) do
+                inside[file] = true
+                if type(item) == "table" and type(item.file) == "string" then inside[item.file] = true end
+            end
+        end
+    end
+    for _i, file in ipairs(files or {}) do
+        if not inside[file] then out[#out + 1] = file end
+    end
+    return out
+end
+
 local function readLibraryShown()
     local ok, saved = pcall(function() return G_reader_settings:readSetting(LIB_SHOWN_KEY) end)
     return (ok and type(saved) == "table") and saved or {}
 end
 
 -- True (the default) when the collection is listed in the Library's Collections tab.
+-- `kind` is "favorites", "tbr" or NO_COLLECTION ("none": the "Uncollected"
+-- list of the books that are in no collection).
 function M.libraryCollectionShown(kind)
     return readLibraryShown()[kind] ~= false
 end
@@ -318,7 +350,8 @@ local function readShown()
     return (ok and type(saved) == "table") and saved or {}
 end
 
--- True (the default) when the collection is listed under Collections.
+-- True (the default) when the collection is listed under Collections (Home).
+-- Same kinds as libraryCollectionShown.
 function M.collectionShown(kind)
     return readShown()[kind] ~= false
 end
@@ -344,6 +377,7 @@ function M.signature()
     end
     parts[#parts + 1] = "c" .. (M.collectionShown("favorites") and "f" or "-")
         .. (M.collectionShown("tbr") and "t" or "-")
+        .. (M.collectionShown(M.NO_COLLECTION) and "n" or "-")
     return table.concat(parts, "|")
 end
 

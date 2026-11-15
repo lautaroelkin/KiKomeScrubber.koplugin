@@ -39,6 +39,13 @@
 --   StablePages.clearGlobalMode()          -> true when it saved: no choice made (KiKome follows KOReader's switch)
 --   StablePages.setGlobalMode(mode)        -> true when it saved
 --   StablePages.applyOpen()                the pages of the book that is open now (parked too), if any
+--   StablePages.syncNative(ui)             the user turned stable pages on/off in KOReader's own menu: the book's
+--                                          choice follows (on -> KOReader numbering, off -> off)
+--   StablePages.shown(file) -> count, kind   what Book details shows as the book's pages: kind is
+--                                          "metadata" (the Metadata count), "stable" (KOReader's stable pages,
+--                                          from the open book or the last total saved) or nil when the book has
+--                                          no stable pages or the total is not known yet (the caller then shows
+--                                          the ordinary page count)
 --
 -- How it works. KOReader numbers stable pages by characters: a new page every N
 -- characters (its "Characters per page" setting). A page count is turned into
@@ -206,7 +213,7 @@ end
 -- follows what it will have: a book that got its stable pages from the setting goes back
 -- to what it had before; any other has what it really has (stable pages turned on from
 -- KOReader's own menu show as "koreader").
-function StablePages.choice(file)
+local function choiceOf(file)
     local ds, was_own = openSettings(file)
     local saved = savedMode(ds)
     local effective = saved
@@ -229,6 +236,13 @@ function StablePages.choice(file)
     end
     release(ds, was_own)
     return effective, saved
+end
+
+-- What the book follows. A book that is open first takes in a change the user made in KOReader's own menu.
+function StablePages.choice(file)
+    local ui = StablePages.liveUi(file)
+    if ui then pcall(StablePages.syncNative, ui) end
+    return choiceOf(file)
 end
 
 function StablePages.setMode(file, mode)
@@ -259,6 +273,9 @@ function StablePages.setMode(file, mode)
             and (ds:readSetting("kikome_pages_target") ~= nil or ds:readSetting("kikome_pages_chars") ~= nil) then
             ds:delSetting("pagemap_chars_per_synthetic_page")
         end
+        -- KOReader's numbering for a book that is closed: its own switch goes on in the sidecar, so that
+        -- KOReader itself builds the stable pages when the book loads (an open book gets them from apply())
+        if own and mode == "koreader" then ds:saveSetting("pagemap_use_page_labels", true) end
         ds:flush()
     end)
     release(ds, own)
@@ -318,6 +335,25 @@ local function build(doc, chars)
     return true
 end
 
+-- Whether KOReader will really draw the stable page numbers now (when it can tell).
+local function wantsLabels(pm)
+    if type(pm.wantsPageLabels) ~= "function" then return true end
+    local ok, wants = pcall(pm.wantsPageLabels, pm)
+    return ok and wants == true
+end
+
+-- A page map built in the middle of a session is not always noticed by KOReader's page map
+-- module (it can keep "this book has no page map" from when the book loaded): tell it.
+-- Returns true when the numbers are shown.
+local function showLabels(ui, pm)
+    if wantsLabels(pm) then return true end
+    pcall(function()
+        if (mapSize(ui.document) or 0) > 0 then pm.has_pagemap = true end
+    end)
+    pcall(function() ui:handleEvent(require("ui/event"):new("UsePageLabelsUpdated")) end)
+    return wantsLabels(pm)
+end
+
 local function close(size, n)
     return size ~= nil and math.abs(size - n) <= math.max(1, math.floor(n * 0.01))
 end
@@ -361,6 +397,7 @@ local function enable(ui, chars, n, size)
             settings:saveSetting("kikome_pages_size", size)
         end)
     end
+    pcall(showLabels, ui, pm)
     pcall(function() ui.view.footer:onUpdateFooter(true) end)
     pcall(function() require("ui/uimanager"):setDirty("all", "partial") end)
 end
@@ -435,11 +472,24 @@ local function useKOReader(ui)
     local changed = pm.use_page_labels ~= true
     pcall(function() pm.use_page_labels = true end)
     if settings then pcall(function() settings:saveSetting("pagemap_use_page_labels", true) end) end
-    if changed or rebuilt then touchView(ui) end
+    -- A book that had stable pages off has no page map in memory (KOReader builds it when the
+    -- book loads with them on), so turning the switch on is not enough: make it now, with KOReader's
+    -- own characters per page. Not when the publisher's numbers were replaced (reopen): they come back
+    -- only when the book loads again.
+    local made = false
+    if not reopen and (mapSize(ui.document) or 0) == 0 then
+        local chars = type(pm.chars_per_synthetic_page) == "number" and pm.chars_per_synthetic_page
+            or koreaderChars(settings)
+        made = build(ui.document, chars)
+    end
     local size = mapSize(ui.document)
-    -- no pages yet, or the publisher's are gone from this session: KOReader gives them when the book loads again
-    local later = reopen or (size or 0) == 0
-    return later and "koreader_later" or "koreader", size, nil, changed or rebuilt or reopen
+    -- the map is there: make sure KOReader draws it (if it does not, the switch is saved in the
+    -- sidecar and the numbers come when the book loads again)
+    local drawn = (size or 0) > 0 and showLabels(ui, pm)
+    if changed or rebuilt or made then touchView(ui) end
+    -- no pages yet, not drawn, or the publisher's are gone from this session: KOReader gives them when the book loads again
+    local later = reopen or not drawn
+    return later and "koreader_later" or "koreader", size, nil, changed or rebuilt or reopen or made
 end
 
 -- The choice of Settings was taken away and this book has no choice of its own: if its stable
@@ -457,7 +507,27 @@ local function undoGlobal(ui)
     return turnOff(ui)
 end
 
-function StablePages.apply(ui, opts)
+-- The total of KOReader's own stable pages, kept in the book's sidecar so that Book details can
+-- show it while the book is closed (the sidecar's doc_pages is the layout's page count, not this).
+-- Not kept while the pages are the ones made from the Metadata count: those are not KOReader's.
+local COUNT_KEY = "kikome_stable_count"
+local function rememberCount(ui, status)
+    local doc, pm, settings = ui and ui.document, ui and ui.pagemap, ui and ui.doc_settings
+    if not (doc and pm and settings) then return end
+    if doc.info and doc.info.has_pages then return end
+    if status == "unsupported" or status == "locked" or status == "koreader_later" then return end
+    pcall(function()
+        if settings:readSetting("kikome_pages_target") ~= nil then return end
+        if pm.use_page_labels == true then
+            local size = mapSize(doc)
+            if size and size > 0 then settings:saveSetting(COUNT_KEY, size) end
+        else
+            settings:delSetting(COUNT_KEY)
+        end
+    end)
+end
+
+local function applyInner(ui, opts)
     opts = opts or {}
     local doc, pm = ui and ui.document, ui and ui.pagemap
     if not (doc and pm) then return "unsupported" end
@@ -517,6 +587,74 @@ function StablePages.apply(ui, opts)
     enable(ui, chars, n, size)
     logger.info("KiKome: stable pages", size, "for a target of", n, "with", chars, "characters per page")
     return close(size, n) and "ok" or "approx", size, chars, true
+end
+
+function StablePages.apply(ui, opts)
+    if ui then ui._kikome_sp_busy = true end
+    local ok, status, size, chars, changed = pcall(applyInner, ui, opts)
+    if ui then ui._kikome_sp_busy = nil end
+    if not ok then error(status, 0) end
+    rememberCount(ui, status)
+    -- what the switch is after this: a change from it later is the user's, in KOReader's menu
+    if status ~= "unsupported" and status ~= "locked" then
+        pcall(function() ui._kikome_sp_expected = ui.pagemap.use_page_labels == true end)
+    end
+    return status, size, chars, changed
+end
+
+-- The user turned stable pages on or off in KOReader's own menu: the book's choice follows, so that
+-- Kobold shows what is true and apply() does not undo it the next time the book opens. Off in
+-- KOReader is "off" for this book (the dot goes to Off); on is KOReader's numbering. A book that
+-- is set to the Metadata count and still has the pages on is left as it is.
+function StablePages.syncNative(ui)
+    if not (ui and ui.pagemap and ui.document and ui.doc_settings) then return false end
+    if ui._kikome_sp_busy or ui._kikome_sp_expected == nil then return false end
+    if ui.document.info and ui.document.info.has_pages then return false end
+    local now = ui.pagemap.use_page_labels == true
+    if now == ui._kikome_sp_expected then return false end
+    ui._kikome_sp_expected = now
+    local file = ui.document.file
+    local effective = choiceOf(file)
+    local want = now and "koreader" or "off"
+    if effective == want or (now and effective == "metadata") then return false end
+    StablePages.setMode(file, want)
+    return true
+end
+
+-- Formats that have real pages: stable pages do not apply to them.
+local NO_STABLE_EXT = {
+    pdf = true, djvu = true, djv = true, cbz = true, cbr = true, cb7 = true,
+    tif = true, tiff = true, jpg = true, jpeg = true, png = true, gif = true, bmp = true, webp = true,
+}
+
+-- The page count Book details shows for the book and what kind it is (see the header).
+function StablePages.shown(file)
+    local ext = (file:match("%.([^%./]+)$") or ""):lower()
+    if NO_STABLE_EXT[ext] then return nil end
+    local effective = StablePages.choice(file)
+    if effective ~= "metadata" and effective ~= "koreader" then return nil end
+    if effective == "metadata" then
+        local n = pagesOf(file)
+        if n then return n, "metadata" end
+        -- no count in Metadata: the book uses KOReader's numbering, as apply() does
+    end
+    -- the book is open: KOReader's total as it is now
+    local ui = StablePages.liveUi(file)
+    if ui and ui.document and ui.pagemap and ui.pagemap.use_page_labels == true then
+        local ours = false
+        pcall(function() ours = ui.doc_settings:readSetting("kikome_pages_target") ~= nil end)
+        if not ours then
+            local size = mapSize(ui.document)
+            if size and size > 0 then return size, "stable" end
+        end
+    end
+    -- closed: the last total KOReader had
+    local ds, own = openSettings(file)
+    local saved
+    if ds then pcall(function() saved = ds:readSetting(COUNT_KEY) end) end
+    release(ds, own)
+    if type(saved) == "number" and saved > 0 then return saved, "stable" end
+    return nil
 end
 
 -- The words for a result, or nil when there is nothing to say.

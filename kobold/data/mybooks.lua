@@ -14,6 +14,10 @@ local _               = require("kobold.i18n")
 
 local KoboldMyBooksData = {}
 
+-- The key of the "Uncollected" group of the Collections tab. It is not a
+-- ReadCollection key (the group has no collection behind it).
+local NO_COLLECTION_KEY = "::no-collection::"
+
 -- Filter ids in menu order. "onhold" is KOReader's On hold status (abandoned).
 KoboldMyBooksData.FILTERS = { "all", "reading", "unread", "finished", "onhold" }
 
@@ -294,7 +298,8 @@ end
 
 -- Groups for the Authors, Series, Collections or Genres tab (`kind` is
 -- "authors", "series", "collections" or "genres"). Each group is
---   { key, name, books = { entry, ... }, unknown = true for "Unknown author" }
+--   { key, name, books = { entry, ... }, unknown = true for "Unknown author",
+--     no_collection = true for "Uncollected" (Collections only) }
 -- with its books in reading order: by title for an author or a genre, by
 -- series number for a series, and in the collection's own order for a
 -- collection. Books without a series are left out of Series, and books with
@@ -364,6 +369,20 @@ function KoboldMyBooksData.getGroups(books, kind)
                     end
                 end
             end
+            -- "Uncollected": the books that are in no collection. A book
+            -- leaves this list as soon as it is added to one, and the list
+            -- itself goes when it is empty (Settings > Library options > Tabs
+            -- > Collections turns it off).
+            if Chips.libraryCollectionShown(Chips.NO_COLLECTION) then
+                local files = {}
+                for _i, b in ipairs(books) do files[#files + 1] = b.file end
+                local loose = Chips.filesWithoutCollection(RC, files)
+                if #loose > 0 then
+                    local g = group(NO_COLLECTION_KEY, _("Uncollected"))
+                    g.no_collection = true
+                    for _i, file in ipairs(loose) do g.books[#g.books + 1] = by_file[file] end
+                end
+            end
         end
     end
 
@@ -389,10 +408,12 @@ function KoboldMyBooksData.getGroups(books, kind)
     return groups
 end
 
--- `groups` sorted by name, A to Z or Z to A. "Unknown author" is always last.
+-- `groups` sorted by name, A to Z or Z to A. "Unknown author" and "No collection
+-- yet" are always last.
 function KoboldMyBooksData.sortGroups(groups, sort)
+    local function last(g) return (g.unknown or g.no_collection) and true or false end
     table.sort(groups, function(a, b)
-        if a.unknown ~= b.unknown then return not a.unknown end
+        if last(a) ~= last(b) then return not last(a) end
         local ka, kb = a.name:lower(), b.name:lower()
         if ka == kb then return a.key < b.key end
         if sort == "name_desc" then return ka > kb end

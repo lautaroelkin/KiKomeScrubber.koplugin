@@ -34,6 +34,10 @@ local DEFAULTS = {
     stats_line2_action = DEFAULT_ACTION,
     stats_label        = nil,            -- nil = "Reading Stats"
     battery            = "fill",         -- "fill" or "percent"
+    -- The top of Home (Settings > Home > Top of Home): "recent" is the row of recent
+    -- books, "current" one card with the book being read (see ui/home_current.lua),
+    -- "clock" the time with a line from a book that mentions it (see ui/home_clock.lua).
+    home_top           = "recent",
     -- Status bar clock (see data/clock.lua). The 12 / 24-hour choice is not
     -- here: the clock follows KOReader's own setting.
     clock_layout       = "time",         -- "time", "day_time", "time_date", "time_numeric", "date", "two_lines" or "custom"
@@ -46,6 +50,9 @@ local DEFAULTS = {
     -- It has no default here on purpose: with none chosen yet, Settings shows KOReader's own switch
     -- (Default settings for new books > use stable page numbers), or what the older switch below said.
     stable_pages       = false,          -- older switch (Metadata page count on / off), taken over by stable_pages_mode
+    -- The plugin's two fonts (see data/fonts.lua): the path of a font file, or nil for KOReader's own font.
+    font_primary       = nil,
+    font_secondary     = nil,
 }
 
 -- The settings behind the reading stats popup, for its reset button.
