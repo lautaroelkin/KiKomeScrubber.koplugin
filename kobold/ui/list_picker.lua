@@ -257,7 +257,7 @@ function Picker:build()
     if type(sub) == "function" then sub = sub(self) end
     if sub and sub ~= "" then
         local sub_h = U(28)
-        local face = KoboldWidgets.face(14)
+        local face = KoboldWidgets.secondaryFace(14)
         body[#body + 1] = KoboldWidgets.fixed(content_w, sub_h, LeftContainer:new{
             dimen = Geom:new{ w = content_w, h = sub_h },
             TextWidget:new{
@@ -291,7 +291,7 @@ function Picker:build()
         rows[#rows + 1] = CenterContainer:new{
             dimen = Geom:new{ w = row_w, h = list_h },
             TextWidget:new{
-                text = self.empty_text or _("Nothing here."), face = KoboldWidgets.face(15),
+                text = self.empty_text or _("Nothing here."), face = KoboldWidgets.secondaryFace(15),
                 fgcolor = KoboldWidgets.subtitleColor(), max_width = row_w,
             },
         }

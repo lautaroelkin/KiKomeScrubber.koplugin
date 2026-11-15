@@ -76,8 +76,8 @@ local KoboldBookDetails = InputContainer:extend{
     tab = "synopsis",
 }
 
-local function italicFace(size)
-    local ok, face = pcall(function() return KoboldWidgets.italicFace(size) end)
+local function secondaryFace(size)
+    local ok, face = pcall(function() return KoboldWidgets.secondaryFace(size) end)
     if ok and face then return face end
     return KoboldWidgets.face(size)
 end
@@ -120,6 +120,16 @@ local function bookProps(file)
         props.series_index = nil
     end
     return props, info
+end
+
+-- The page count the book shows (the tile and "X of Y pages") and what it is: "metadata" (the
+-- count of Metadata), "stable" (KOReader's stable pages) or nil (the ordinary count of
+-- bookProps). While the stable total is not known yet (the book was never opened with stable
+-- pages on) the ordinary count is used, so there is always a number.
+local function shownPages(file, props)
+    local ok, n, kind = pcall(function() return require("kobold.data.stable_pages").shown(file) end)
+    if ok and n then return n, kind end
+    return props.pages, nil
 end
 
 -- Description without HTML, as KOReader shows it.
@@ -278,7 +288,7 @@ local function detailsCard(rows, w, max_h, M)
             value = valuePill(row.value, value_w, M)
         end
         local label = TextWidget:new{
-            text = row.label, face = KoboldWidgets.face(M.font - 1),
+            text = row.label, face = KoboldWidgets.secondaryFace(M.font - 1),
             fgcolor = KoboldWidgets.subtitleColor(), max_width = label_w,
         }
         local row_h = math.max(value:getSize().h, label:getSize().h) + 2 * row_pad
@@ -402,10 +412,11 @@ function KoboldBookDetails:buildDetails(level)
     -- Progress: a bar, then "42% read" (or "On hold") on the left and the
     -- pages on the right.
     local frac = fraction(info)
-    local label_h = TextWidget:new{ text = "0", face = KoboldWidgets.face(14) }:getSize().h
+    local label_h = TextWidget:new{ text = "0", face = KoboldWidgets.secondaryFace(14) }:getSize().h
     local progress_note
-    if props.pages and frac > 0 and frac < 1 then
-        progress_note = string.format(_("%d of %d pages"), math.floor(frac * props.pages + 0.5), props.pages)
+    local page_count, page_kind = shownPages(file, props)
+    if page_count and frac > 0 and frac < 1 then
+        progress_note = string.format(_("%d of %d pages"), math.floor(frac * page_count + 0.5), page_count)
     end
 
     -- The text column for one variant v = { title_lines, authors, bar, note }.
@@ -429,7 +440,7 @@ function KoboldBookDetails:buildDetails(level)
         if props.authors and v.authors then
             col[#col + 1] = VerticalSpan:new{ width = U(M.info_gap) }
             col[#col + 1] = TextWidget:new{
-                text = (props.authors:gsub("\n", ", ")), face = KoboldWidgets.face(17),
+                text = (props.authors:gsub("\n", ", ")), face = KoboldWidgets.secondaryFace(17),
                 fgcolor = KoboldWidgets.subtitleColor(), max_width = text_w,
             }
         end
@@ -446,7 +457,7 @@ function KoboldBookDetails:buildDetails(level)
                     note_row[#note_row + 1] = RightContainer:new{
                         dimen = Geom:new{ w = text_w, h = label_h },
                         TextWidget:new{
-                            text = progress_note, face = KoboldWidgets.face(13),
+                            text = progress_note, face = KoboldWidgets.secondaryFace(13),
                             fgcolor = KoboldWidgets.subtitleColor(), max_width = math.floor(text_w * 0.6),
                         },
                     }
@@ -487,7 +498,7 @@ function KoboldBookDetails:buildDetails(level)
 
     -- Read now: a black pill with white text. Round "..." beside it.
     local icon_sz = U(20)
-    local read_label = TextWidget:new{ text = _("Read now"), face = italicFace(19), fgcolor = WHITE }
+    local read_label = TextWidget:new{ text = _("Read now"), face = KoboldWidgets.face(19), fgcolor = WHITE }
     local read_content = HorizontalGroup:new{
         align = "center",
         KoboldWidgets.inverted(OptionSheet.iconWidget("play", icon_sz, BLACK)),
@@ -542,7 +553,16 @@ function KoboldBookDetails:buildDetails(level)
 
     -- Facts: pages, language, format and size as rounded tiles.
     local facts = {}
-    if props.pages then facts[#facts + 1] = { value = tostring(props.pages), label = _("Pages") } end
+    if page_count then
+        -- the label says which count it is; the shorter one is used when the first does not fit the tile
+        local labels = { _("Pages") }
+        if page_kind == "metadata" then
+            labels = { _("Metadata pages"), _("M.Data Pages") }
+        elseif page_kind == "stable" then
+            labels = { _("Stable pages"), _("Stable pgs") }
+        end
+        facts[#facts + 1] = { value = tostring(page_count), label = labels[1], labels = labels }
+    end
     local lang = nonEmpty(props.language)
     if lang then facts[#facts + 1] = { value = (lang:match("^(%a+)") or lang):upper(), label = _("Language") } end
     local format = (file:match("%.([^%./]+)$") or ""):upper()
@@ -580,6 +600,17 @@ function KoboldBookDetails:buildDetails(level)
     if show_tiles then
         tiles = HorizontalGroup:new{}
         local tile_w = math.floor((inner_w - (#facts - 1) * tile_gap) / #facts)
+        -- the first label of the tile that fits its width (the last one if none does)
+        local function fitLabel(f, max_w)
+            local options = f.labels or { f.label }
+            for _i, text in ipairs(options) do
+                local probe = TextWidget:new{ text = text, face = KoboldWidgets.secondaryFace(12) }
+                local w = probe:getSize().w
+                pcall(function() probe:free() end)
+                if w <= max_w then return text end
+            end
+            return options[#options]
+        end
         for i, f in ipairs(facts) do
             if i > 1 then tiles[#tiles + 1] = HorizontalSpan:new{ width = tile_gap } end
             tiles[#tiles + 1] = roundBox(tile_w, tile_h, U(16), SOFT, VerticalGroup:new{
@@ -590,7 +621,7 @@ function KoboldBookDetails:buildDetails(level)
                 },
                 VerticalSpan:new{ width = U(2) },
                 TextWidget:new{
-                    text = f.label, face = KoboldWidgets.face(12),
+                    text = fitLabel(f, tile_w - U(12)), face = KoboldWidgets.secondaryFace(12),
                     fgcolor = KoboldWidgets.subtitleColor(), max_width = tile_w - U(12),
                 },
             })
@@ -621,10 +652,10 @@ function KoboldBookDetails:buildDetails(level)
     -- Tab content fills the rest of the sheet.
     local body
     if self.tab == "synopsis" then
-        body = ScrollTextWidget:new{
-            text = plainText(props.description) or _("No synopsis."), face = KoboldWidgets.face(16),
-            width = inner_w, height = body_h, dialog = self,
-        }
+        -- where the body starts on the screen: the sum of what is above it
+        local body_y = y0 + top_h + gap + header_h + gap
+            + (show_tiles and (tile_h + gap) or 0) + seg_total + gap
+        body = self:buildSynopsis(plainText(props.description) or _("No synopsis."), inner_w, body_h, x0, body_y)
         pcall(function() full_card:free() end)
     else
         -- the whole card when it fits (it does, unless even the tightest level
@@ -786,7 +817,7 @@ function KoboldBookDetails:buildEdit(level)
         fgcolor = KoboldWidgets.subtitleColor(), max_width = inner_w,
     }
     local caption = TextWidget:new{
-        text = _("Status"), face = KoboldWidgets.face(M.font),
+        text = _("Status"), face = KoboldWidgets.secondaryFace(M.font),
         fgcolor = KoboldWidgets.subtitleColor(),
     }
     local sub_h, cap_h = subtitle:getSize().h, caption:getSize().h
@@ -852,7 +883,7 @@ function KoboldBookDetails:buildEdit(level)
     local note = rv.note and (rv.note:gsub("%s+", " "))
     local review_label = TextWidget:new{
         text = note or _("Add review…"),
-        face = note and KoboldWidgets.face(15) or italicFace(15),
+        face = note and KoboldWidgets.face(15) or secondaryFace(15),
         fgcolor = note and BLACK or Blitbuffer.Color8(0x77),
         max_width = text_w,
     }
@@ -1024,7 +1055,11 @@ end
 -- screen, over the lower part of the sheet. The hide key lowers it, and the
 -- field then uses the whole sheet; tapping the field brings it back. While
 -- typing, the field shows the end of the text (where the caret is); with the
--- keyboard down it shows the start, cut with "…" if it is long. A small
+-- keyboard down it shows the start. A text longer than the field is read by
+-- pages, as the lists of the Library: a bar on the right shows the page; swipe
+-- up / down on the field, tap above / under the knob of the bar, or use the
+-- page keys, and the whole text of the field changes. The caret does not move
+-- with it. Typing, or moving the caret, brings the view back to the caret. A small
 -- "Restore original" under the field, for a corrected metadata field.
 -- openEditor{ heading, value, placeholder, max, multiline, save, restore }
 -- opens it; `save(text)` returns true when it saved (the editor then closes),
@@ -1104,6 +1139,32 @@ local function wrapText(text, face, max_w, cache)
         pstart = pstart + #para + 1
     end
     return lines, starts
+end
+
+-- The bar of a text read by pages (the field of the editor, the synopsis): a
+-- light line with a round dark knob that sits at the current page, as the
+-- plugin's page bars. `bar_x` and `top` are where the line starts inside the
+-- group it is put over; the caller gives them as overlap offsets. Returns the
+-- line, the knob, and the knob's offset from the top of the line and height.
+local function textPageBar(bar_x, top, track_h, pages, page)
+    local sb_w = U(5)
+    local thumb_h = math.min(track_h, math.max(U(28), math.floor(track_h / pages)))
+    local thumb_y = pages > 1
+        and math.floor((page - 1) / (pages - 1) * (track_h - thumb_h) + 0.5) or 0
+    -- (a FrameContainer takes its size from the box inside it)
+    local track = FrameContainer:new{
+        bordersize = 0, padding = 0, radius = math.floor(sb_w / 2),
+        background = Blitbuffer.COLOR_LIGHT_GRAY,
+        KoboldWidgets.fixed(sb_w, track_h, HorizontalSpan:new{ width = 0 }),
+    }
+    local thumb = FrameContainer:new{
+        bordersize = 0, padding = 0, radius = math.floor(sb_w / 2),
+        background = Blitbuffer.COLOR_DARK_GRAY,
+        KoboldWidgets.fixed(sb_w, thumb_h, HorizontalSpan:new{ width = 0 }),
+    }
+    track.overlap_offset = { bar_x, top }
+    thumb.overlap_offset = { bar_x, top + thumb_y }
+    return track, thumb, thumb_y, thumb_h
 end
 
 -- Where the character that ends at byte `pos` begins (UTF-8).
@@ -1299,7 +1360,7 @@ function KoboldBookDetails:buildEditor()
     local hint_text = st.hint
     if type(hint_text) == "function" then hint_text = hint_text(st) end
     local hint = hint_text and TextWidget:new{
-        text = hint_text, face = KoboldWidgets.face(15),
+        text = hint_text, face = KoboldWidgets.secondaryFace(15),
         fgcolor = KoboldWidgets.subtitleColor(), max_width = inner_w,
     } or nil
     local hint_h = hint and (gap + hint:getSize().h) or 0
@@ -1320,7 +1381,7 @@ function KoboldBookDetails:buildEditor()
         -- with only the "Search online" row there is no list to name
         local only_online = st.online and #matches == 1
         sug_caption = TextWidget:new{
-            text = (only_online or not st.suggest_title) and " " or st.suggest_title, face = KoboldWidgets.face(12),
+            text = (only_online or not st.suggest_title) and " " or st.suggest_title, face = KoboldWidgets.secondaryFace(12),
             fgcolor = KoboldWidgets.subtitleColor(),
         }
         sug_cap_h = sug_caption:getSize().h + U(4)
@@ -1345,7 +1406,7 @@ function KoboldBookDetails:buildEditor()
     end
 
     st.pos = math.max(0, math.min(st.pos or #st.value, #st.value))
-    st.layout, st.chip_rects = nil, {}
+    st.layout, st.chip_rects, st.scroll, st.bar_rect = nil, {}, nil, nil
     local text_x, text_y = x0 + field_pad, field_y + field_pad
     local group = VerticalGroup:new{ align = "left" }
     if st.chips then
@@ -1414,7 +1475,7 @@ function KoboldBookDetails:buildEditor()
                         if st.kb_open then row[#row + 1] = caret() end
                         if #st.chips == 0 then
                             row[#row + 1] = TextWidget:new{
-                                text = st.placeholder or "", face = italicFace(18), fgcolor = grey,
+                                text = st.placeholder or "", face = secondaryFace(18), fgcolor = grey,
                                 bgcolor = SOFT, max_width = room,
                             }
                         end
@@ -1436,7 +1497,7 @@ function KoboldBookDetails:buildEditor()
         local row = HorizontalGroup:new{ align = "center" }
         if caret_on then row[#row + 1] = caret() end
         row[#row + 1] = TextWidget:new{
-            text = st.placeholder or "", face = italicFace(18), fgcolor = grey,
+            text = st.placeholder or "", face = secondaryFace(18), fgcolor = grey,
             bgcolor = SOFT, max_width = text_w - caret_w,
         }
         group[#group + 1] = lineBox(row)
@@ -1448,18 +1509,30 @@ function KoboldBookDetails:buildEditor()
         for i = 1, #lines do
             if starts[i] <= st.pos then ci = i else break end
         end
-        -- scrolls only as far as the caret needs
+        local max_first = math.max(1, #lines - vis + 1)
         local f = st.first or 1
-        if ci < f then f = ci elseif ci > f + vis - 1 then f = ci - vis + 1 end
-        f = math.max(1, math.min(f, math.max(1, #lines - vis + 1)))
+        local first
+        if st.free_scroll then
+            -- scrolled by hand (drag, swipe, page keys): the caret is not followed
+            f = math.max(1, math.min(f, max_first))
+            first = f
+        else
+            -- scrolls only as far as the caret needs
+            if ci < f then f = ci elseif ci > f + vis - 1 then f = ci - vis + 1 end
+            f = math.max(1, math.min(f, max_first))
+            first = st.kb_open and f or 1
+        end
         st.first = f
-        local first = st.kb_open and f or 1
         local last = math.min(#lines, first + vis - 1)
+        local pages = math.max(1, math.ceil(#lines / vis))
+        -- the page the field shows (the last one holds the last lines, whole)
+        local page = (first >= max_first) and pages or math.min(pages, math.ceil(first / vis))
+        st.scroll = {
+            total = #lines, vis = vis, first = first, max_first = max_first,
+            pages = pages, page = page,
+        }
         for i = first, last do
             local text = lines[i]
-            if not st.kb_open and i == last and last < #lines then
-                text = text:gsub("%s+$", "") .. "…"   -- more below: the field is cut here
-            end
             local inner
             if text == "" then
                 inner = HorizontalSpan:new{ width = 0 }
@@ -1499,6 +1572,25 @@ function KoboldBookDetails:buildEditor()
         radius = U(16), background = SOFT, padding = field_pad - fbs,
         KoboldWidgets.fixed(text_w, avail_h, group),
     }
+    -- A text longer than the field: a scroll bar on the right, in the padding
+    -- (the text keeps its width). A light line with a round dark knob, as the
+    -- plugin's page bars.
+    local field_widget = field
+    local sc = st.scroll
+    if sc and sc.total > sc.vis then
+        local track_h = avail_h
+        local bar_x = inner_w - math.floor((field_pad + U(5)) / 2)
+        local track, thumb, thumb_y, thumb_h = textPageBar(bar_x, field_pad, track_h, sc.pages, sc.page)
+        field_widget = OverlapGroup:new{
+            dimen = Geom:new{ w = inner_w, h = field_h },
+            field, track, thumb,
+        }
+        -- a tap on the strip of the bar: the page before (above the knob) or after
+        local strip = U(26)
+        st.bar_rect = Geom:new{ x = x0 + inner_w - strip, y = field_y, w = strip, h = field_h }
+        st.bar_thumb = { y = field_y + field_pad + thumb_y, h = thumb_h }
+        st.bar_top, st.bar_h = field_y + field_pad, track_h
+    end
     -- The series' number: its name on the left, a small box on the right.
     local num_row
     st.num_rect = nil
@@ -1512,7 +1604,7 @@ function KoboldBookDetails:buildEditor()
         if st.num.value == "" then
             if focused and st.kb_open then content[#content + 1] = caret() end
             content[#content + 1] = TextWidget:new{
-                text = st.num.placeholder or "", face = italicFace(18), fgcolor = grey,
+                text = st.num.placeholder or "", face = secondaryFace(18), fgcolor = grey,
                 bgcolor = SOFT, max_width = num_text_w,
             }
         else
@@ -1527,7 +1619,7 @@ function KoboldBookDetails:buildEditor()
             LeftContainer:new{ dimen = Geom:new{ w = box_w - 2 * bs, h = num_box_h - 2 * bs }, content },
         }
         local num_label = TextWidget:new{
-            text = st.num.label or "", face = KoboldWidgets.face(15),
+            text = st.num.label or "", face = KoboldWidgets.secondaryFace(15),
             fgcolor = KoboldWidgets.subtitleColor(), max_width = inner_w - box_w - U(12),
         }
         num_row = OverlapGroup:new{
@@ -1545,7 +1637,7 @@ function KoboldBookDetails:buildEditor()
         RightContainer:new{
             dimen = Geom:new{ w = inner_w, h = counter_h },
             TextWidget:new{
-                text = ulen(st.chips and editorText(st) or st.value) .. " / " .. st.max, face = KoboldWidgets.face(13),
+                text = ulen(st.chips and editorText(st) or st.value) .. " / " .. st.max, face = KoboldWidgets.secondaryFace(13),
                 fgcolor = KoboldWidgets.subtitleColor(),
             },
         },
@@ -1568,7 +1660,7 @@ function KoboldBookDetails:buildEditor()
         VerticalSpan:new{ width = sub_gap },
         subtitle,
         VerticalSpan:new{ width = gap },
-        field,
+        field_widget,
         VerticalSpan:new{ width = counter_gap },
         counter,
     }
@@ -1607,7 +1699,7 @@ function KoboldBookDetails:buildEditor()
                             text = "›", face = KoboldWidgets.face(22),
                             fgcolor = KoboldWidgets.subtitleColor(),
                         } or (m.count and m.count > 0) and TextWidget:new{
-                            text = tostring(m.count), face = KoboldWidgets.face(14),
+                            text = tostring(m.count), face = KoboldWidgets.secondaryFace(14),
                             fgcolor = KoboldWidgets.subtitleColor(),
                         } or HorizontalSpan:new{ width = 0 },
                         HorizontalSpan:new{ width = U(6) },
@@ -1690,6 +1782,7 @@ function KoboldBookDetails:openEditor(opts)
     self.kb = Keyboard.new{
         multiline = st.multiline,
         on_insert = function(c)
+            st.free_scroll = nil   -- typing: the view goes back to the caret
             if st.num and st.focus == "number" then
                 -- the number: digits and one point (a comma is a point)
                 if c == "," then c = "." end
@@ -1712,6 +1805,7 @@ function KoboldBookDetails:openEditor(opts)
             st.pos = st.pos + #c
         end,
         on_delete = function()
+            st.free_scroll = nil
             if st.num and st.focus == "number" then
                 st.num.value = st.num.value:sub(1, -2)
                 return
@@ -1730,6 +1824,7 @@ function KoboldBookDetails:openEditor(opts)
             end
         end,
         on_clear = function()
+            st.free_scroll = nil
             if st.num and st.focus == "number" then
                 st.num.value = ""
                 return
@@ -1740,6 +1835,7 @@ function KoboldBookDetails:openEditor(opts)
         -- and not for keywords, where typing always goes to the end)
         on_move = function(delta)
             if (st.num and st.focus == "number") or st.chips then return end
+            st.free_scroll = nil
             st.pos = Keyboard.moveCaret(st.value, st.pos, delta)
         end,
         on_hide = function() self:setEditorKeyboard(false) end,
@@ -1801,6 +1897,7 @@ function KoboldBookDetails:setEditorKeyboard(open)
     local st = self.editor
     if not st or st.kb_open == open then return end
     st.kb_open = open
+    if open then st.free_scroll = nil end
     self:resetEditorKeyboard()
     self:refresh(self:editorRegion())
 end
@@ -1923,6 +2020,10 @@ function KoboldBookDetails:onEditorTap(pos)
         return
     end
     if st.num_rect and pos:intersectWith(st.num_rect) then return self:focusEditorField("number") end
+    if st.bar_rect and pos:intersectWith(st.bar_rect) then
+        local th = st.bar_thumb
+        return self:scrollEditorPage((th and pos.y < th.y) and -1 or 1)
+    end
     if pos:intersectWith(st.field_rect) then
         if st.num and st.focus == "number" then return self:focusEditorField("main") end
         return self:onEditorFieldTap(pos)
@@ -1999,12 +2100,145 @@ function KoboldBookDetails:onEditorHold(pos)
     end
 end
 
+-- Scrolls the text of the editor so that line `first` is the top one, without
+-- touching the caret. True when the view moved.
+function KoboldBookDetails:scrollEditorTo(first)
+    local st = self.editor
+    local sc = st and st.scroll
+    if not (sc and sc.total > sc.vis) then return false end
+    first = math.max(1, math.min(first, sc.max_first))
+    -- compared with where the view is going: a redraw may still be pending
+    local current = st.free_scroll and math.max(1, math.min(st.first or 1, sc.max_first)) or sc.first
+    if first == current then return false end
+    st.first, st.free_scroll = first, true
+    return true
+end
+
+-- The field drawn again after it scrolled; `fast` while the finger is down.
+function KoboldBookDetails:redrawEditorField(fast)
+    local st = self.editor
+    if not (st and st.field_rect) then return end
+    self[1] = self:build()
+    local rect = st.field_rect
+    UIManager:setDirty(self, function() return fast and Keyboard.REFRESH or "ui", rect end)
+end
+
+-- Shows page `page` of the text in the field (the last page holds the last
+-- lines, whole, so it may repeat some of the one before).
+function KoboldBookDetails:goToEditorPage(page)
+    local st = self.editor
+    local sc = st and st.scroll
+    if not (sc and sc.total > sc.vis) then return false end
+    page = math.max(1, math.min(sc.pages, page))
+    if page ~= sc.page and self:scrollEditorTo(math.min((page - 1) * sc.vis + 1, sc.max_first)) then
+        self:redrawEditorField(false)
+    end
+    return true
+end
+
+-- A page of the text up or down (the page keys, a swipe on the field, a tap
+-- on the bar): the whole text of the field changes.
+function KoboldBookDetails:scrollEditorPage(dir)
+    local st = self.editor
+    local sc = st and st.scroll
+    if not (sc and sc.total > sc.vis) then return false end
+    return self:goToEditorPage(sc.page + dir)
+end
+
+-- ── The synopsis ───────────────────────────────────────────────────────────
+-- The text of the Synopsis tab, read by pages like the field of the editor:
+-- a bar on the right with a knob at the page; swipe up / down on the text, tap
+-- above / under the knob, or hold the knob and slide it, and the whole text
+-- changes. `x0`, `body_y` are where the body starts on the screen.
+function KoboldBookDetails:buildSynopsis(text, inner_w, body_h, x0, body_y)
+    local face = KoboldWidgets.face(16)
+    if not (self.syn and self.syn.key == text) then
+        self.syn = { key = text, page = 1, cache = {} }
+    end
+    local syn = self.syn
+    self.syn_bar, self.syn_rect = nil, Geom:new{ x = x0, y = body_y, w = inner_w, h = body_h }
+    local text_w = inner_w - U(16)   -- room for the bar
+    local probe = TextWidget:new{ text = "Ag", face = face }
+    local line_h = probe:getSize().h + U(3)
+    probe:free()
+    local lines = wrapText(text, face, text_w, syn.cache)
+    local vis = math.max(1, math.floor(body_h / line_h))
+    local pages = math.max(1, math.ceil(#lines / vis))
+    local max_first = math.max(1, #lines - vis + 1)
+    syn.page = math.max(1, math.min(syn.page or 1, pages))
+    local first = math.min((syn.page - 1) * vis + 1, max_first)
+    local group = VerticalGroup:new{ align = "left" }
+    for i = first, math.min(#lines, first + vis - 1) do
+        local t = lines[i]
+        local inner = (t == "") and HorizontalSpan:new{ width = 0 }
+            or TextWidget:new{ text = t, face = face, max_width = text_w }
+        group[#group + 1] = LeftContainer:new{ dimen = Geom:new{ w = text_w, h = line_h }, inner }
+    end
+    local body = OverlapGroup:new{ dimen = Geom:new{ w = inner_w, h = body_h }, group }
+    if pages > 1 then
+        local track, thumb, thumb_y, thumb_h = textPageBar(inner_w - U(8), 0, body_h, pages, syn.page)
+        body[#body + 1] = track
+        body[#body + 1] = thumb
+        local strip = U(26)
+        self.syn_bar = {
+            rect = Geom:new{ x = x0 + inner_w - strip, y = body_y, w = strip, h = body_h },
+            top = body_y, h = body_h, pages = pages,
+            thumb = { y = body_y + thumb_y, h = thumb_h },
+        }
+    end
+    return body
+end
+
+-- Page `page` of the synopsis.
+function KoboldBookDetails:goToSynopsisPage(page)
+    local b, syn = self.syn_bar, self.syn
+    if not (b and syn) then return false end
+    page = math.max(1, math.min(b.pages, page))
+    if page ~= syn.page then
+        syn.page = page
+        self:refresh(self.syn_rect)
+    end
+    return true
+end
+
+-- The page bar that can be dragged now (the editor's or the synopsis'), for
+-- KoboldWidgets.registerBarDrag: the touch area, where its track starts, what
+-- pageBarDragTarget needs, and what to do for a page. nil when there is none.
+function KoboldBookDetails:textBar()
+    if self.view == "editor" then
+        local st = self.editor
+        local sc = st and st.scroll
+        if not (sc and sc.pages > 1 and st.bar_rect and st.bar_top) then return nil end
+        return {
+            rect = st.bar_rect, top = st.bar_top,
+            opts = { w = st.bar_rect.w, h = st.bar_h, page = sc.page, pages = sc.pages, arrow = 0 },
+            goTo = function(page) self:goToEditorPage(page) end,
+        }
+    elseif self.view == "details" and self.tab == "synopsis" and self.syn_bar and self.syn then
+        local b = self.syn_bar
+        return {
+            rect = b.rect, top = b.top,
+            opts = { w = b.rect.w, h = b.h, page = self.syn.page, pages = b.pages, arrow = 0 },
+            goTo = function(page) self:goToSynopsisPage(page) end,
+        }
+    end
+    return nil
+end
+
 -- A swipe on the keyboard (in the text editor). The swipe that can close a
 -- quick slide on the space bar is eaten; any other one that started on a key
 -- is a tap (see Keyboard:swipe): typing fast, the touch driver sometimes reads
 -- a tap as a short swipe, and the letter would be lost. A real swipe is not
 -- handled here, so the zones under this one still get it.
 function KoboldBookDetails:onEditorSwipe(ges)
+    local es = self.editor
+    if self.view == "editor" and es and es.scroll and es.field_rect and ges.pos
+        and not self.online_busy and ges.pos:intersectWith(es.field_rect) then
+        -- up shows the next page of the text, down the one before (as the lists)
+        local dir = ges.direction
+        if dir == "north" then return self:scrollEditorPage(1) end
+        if dir == "south" then return self:scrollEditorPage(-1) end
+    end
     if not self.kb then return false end
     if self.kb:recentDrag() then return true end
     local st = self.editor
@@ -2048,8 +2282,10 @@ local META_FIELDS = {
       placeholder = _("Four digits, like 2019") },
     { key = "isbn",         label = _("ISBN"),              max = 20,  more = true,
       placeholder = _("10 or 13 digits") },
-    -- the pages of the edition: the EPUB has no place for it (no_write), so it stays in KiKome
-    { key = "pages",        label = _("Pages"),             max = 5,   more = true, no_write = true,
+    -- the pages of the edition: the EPUB has no place for it (no_write), so it stays in KiKome.
+    -- It is read like the "More details" fields (more) but has its own row on the Metadata
+    -- screen, right above "More details" (own_row)
+    { key = "pages",        label = _("Pages"),             max = 5,   more = true, own_row = true, no_write = true,
       placeholder = _("Pages of the edition, like 496") },
 }
 
@@ -2059,8 +2295,12 @@ local META_ROWS = { { key = "cover", label = _("Cover") } }
 local MORE_ROWS, MORE_KEYS = {}, {}
 for _i, f in ipairs(META_FIELDS) do
     if f.more then
-        MORE_ROWS[#MORE_ROWS + 1] = f
         MORE_KEYS[f.key] = true
+        if f.own_row then
+            META_ROWS[#META_ROWS + 1] = f
+        else
+            MORE_ROWS[#MORE_ROWS + 1] = f
+        end
     elseif f.key ~= "series_index" then
         META_ROWS[#META_ROWS + 1] = f
     end
@@ -2290,7 +2530,7 @@ function KoboldBookDetails:buildMetadata(level)
         local value_w = card_w - U(40)
         local value = TextWidget:new{
             text = text or (is_more and _("Publisher, year and ISBN") or _("Not set")),
-            face = text and KoboldWidgets.face(16) or italicFace(16),
+            face = text and KoboldWidgets.face(16) or secondaryFace(16),
             fgcolor = text and BLACK or grey,
             max_width = value_w,
         }
@@ -2868,7 +3108,7 @@ function KoboldBookDetails:buildCover(level)
         local card_h = #actions * row_h + (#actions - 1) * line_h + 2 * card_pad
         local note = TextBoxWidget:new{
             text = _("The cover you pick is saved for this book only. The book file is not changed."),
-            face = KoboldWidgets.face(12), width = inner_w, fgcolor = grey,
+            face = KoboldWidgets.secondaryFace(12), width = inner_w, fgcolor = grey,
         }
         local used = top_h + gap + card_h + gap + note:getSize().h
         if used > inner_h and level < #LEVELS then
@@ -2889,7 +3129,7 @@ function KoboldBookDetails:buildCover(level)
                         align = "left",
                         TextWidget:new{ text = a.title, face = KoboldWidgets.face(16), bold = true, max_width = card_w - U(40) },
                         VerticalSpan:new{ width = U(2) },
-                        TextWidget:new{ text = a.detail, face = KoboldWidgets.face(12),
+                        TextWidget:new{ text = a.detail, face = KoboldWidgets.secondaryFace(12),
                             fgcolor = KoboldWidgets.subtitleColor(), max_width = card_w - U(40) },
                     },
                 },
@@ -2969,7 +3209,7 @@ function KoboldBookDetails:buildCover(level)
                             dimen = Geom:new{ w = cell_w, h = U(18) },
                             TextWidget:new{
                                 text = string.format("%d × %d", cand.width or 0, cand.height or 0),
-                                face = KoboldWidgets.face(11), fgcolor = KoboldWidgets.subtitleColor(), max_width = cell_w,
+                                face = KoboldWidgets.secondaryFace(11), fgcolor = KoboldWidgets.subtitleColor(), max_width = cell_w,
                             },
                         },
                     },
@@ -2999,7 +3239,7 @@ function KoboldBookDetails:buildCover(level)
                 },
                 CenterContainer:new{
                     dimen = Geom:new{ w = inner_w, h = nav_h },
-                    TextWidget:new{ text = page .. " / " .. pages, face = KoboldWidgets.face(15), bold = true },
+                    TextWidget:new{ text = page .. " / " .. pages, face = KoboldWidgets.secondaryFace(15), bold = true },
                 },
                 RightContainer:new{
                     dimen = Geom:new{ w = inner_w, h = nav_h },
@@ -3662,11 +3902,15 @@ end
 -- pill (kind in words, style as its icon) opens the option sheet: Show (All /
 -- Bookmarks / Highlights / Notes) and, when the book has several, the
 -- highlight style; each tap filters at once. More rows than fit are paged (the
--- bar at the foot, or a swipe). A highlight has a small dot of its colour at
--- the start of its third line (the chapter and page).
+-- bar at the foot, or a swipe). The quote of a highlight is painted the way
+-- the highlight is (a pill of its colour behind the text, or white on black,
+-- as wide as the text column; a line under it or through it, as long as the
+-- text). The line under the quote (chapter, page; "Bookmark") is in the
+-- secondary font; a pencil starts it when the annotation has a note, and a
+-- highlight (underline and strikethrough too) names its colour after the page.
 --
 -- One annotation: the same layout as the detail panel of Page Scrubber: the
--- type and colour as the title ("Highlight (Yellow)"), the date in italics,
+-- type and colour as the title ("Highlight (Yellow)"), the date,
 -- the type's icon with the chapter, the quote painted the way the book paints
 -- it (colour, underline, strikethrough or inverted), the note under a pencil,
 -- "Show in book - Page N" (opens the book at that annotation) and, at the
@@ -3784,22 +4028,21 @@ local function paintColorRect(bb, x, y, w, h, color)
     else bb:paintRect(x, y, w, h, color) end
 end
 
--- A filled circle of the highlight's colour, painted line by line so it works
--- with the screen's colour blend and on a black and white screen alike.
-local function paintColorCircle(bb, x, y, d, color)
-    local r = d / 2
-    for j = 0, d - 1 do
-        local dy = j + 0.5 - r
-        local half = math.floor(math.sqrt(math.max(0, r * r - dy * dy)) + 0.5)
-        if half > 0 then paintColorRect(bb, x + math.floor(r) - half, y + j, 2 * half, 1, color) end
+-- A rounded pill of the highlight's colour, painted line by line so it works
+-- with the screen's colour blend (rounded_rect does not blend) and on a black
+-- and white screen alike. `r` is the corner radius.
+local function paintColorPill(bb, x, y, w, h, r, color)
+    r = math.min(r, math.floor(h / 2), math.floor(w / 2))
+    for j = 0, h - 1 do
+        local d = math.min(j, h - 1 - j)
+        local inset = 0
+        if d < r then
+            local dy = r - d - 0.5
+            inset = r - math.floor(math.sqrt(math.max(0, r * r - dy * dy)) + 0.5)
+        end
+        paintColorRect(bb, x + inset, y + j, w - 2 * inset, 1, color)
     end
 end
-
--- A small plain dot of the highlight's colour.
-local ColorDot = Widget:extend{ d = 0, color = nil }
-function ColorDot:getSize() return Geom:new{ w = self.d, h = self.d } end
-function ColorDot:free() end
-function ColorDot:paintTo(bb, x, y) paintColorCircle(bb, x, y, self.d, self.color) end
 
 -- The icon of an annotation in a d x d box.
 local function entryBadge(e, d, icon_sz)
@@ -3960,6 +4203,68 @@ function QuoteBlock:paintTo(bb, x, y)
     if self.down then self.down:paintTo(bb, x + self.width - U(14), y + self.vis * lh - U(14)) end
 end
 
+-- The quote of a highlight in the list, in up to two lines, painted the way
+-- the highlight is: a pill of its colour behind the text (normal, underline and
+-- strikethrough: their icon already says which one) or the text white on a
+-- black pill (invert), and a plain white pill for a note or a bookmark. Always
+-- `width` wide. A line that does not fit ends in "...".
+local QuotePill = Widget:extend{
+    text = "", face = nil, width = 0, style = "normal", color = nil, max_lines = 2,
+}
+
+function QuotePill:init()
+    local pill_style = (self.style == "normal" or self.style == "invert" or self.style == "plain")
+    self.pad_x = pill_style and U(8) or 0
+    self.pad_y = pill_style and U(2) or 0
+    local text_w = self.width - 2 * self.pad_x
+    local lines = wrapWords(makeMeasure(self.face, false), self.text, text_w)
+    if #lines > self.max_lines then
+        -- the rest of the text goes on the last line, which is cut with "..."
+        local last = table.concat(lines, " ", self.max_lines)
+        for i = #lines, self.max_lines, -1 do lines[i] = nil end
+        lines[self.max_lines] = last
+    end
+    local fg = (self.style == "invert") and WHITE or BLACK
+    self.tws = {}
+    for i, ln in ipairs(lines) do
+        self.tws[i] = TextWidget:new{
+            text = ln, face = self.face, fgcolor = fg,
+            max_width = text_w, truncate_with_ellipsis = true,
+        }
+    end
+    self.lh = self.tws[1] and self.tws[1]:getSize().h or 0
+    self.h = #self.tws * self.lh + 2 * self.pad_y
+end
+
+function QuotePill:getSize() return Geom:new{ w = self.width, h = self.h } end
+
+function QuotePill:free()
+    for _i, t in ipairs(self.tws or {}) do pcall(function() t:free() end) end
+    self.tws = {}
+end
+
+function QuotePill:paintTo(bb, x, y)
+    local n = #self.tws
+    if n == 0 then return end
+    if self.style == "normal" then
+        paintColorPill(bb, x, y, self.width, self.h, U(10), self.color)
+    elseif self.style == "invert" then
+        bb:paintRoundedRect(x, y, self.width, self.h, BLACK, U(10))
+    elseif self.style == "plain" then
+        bb:paintRoundedRect(x, y, self.width, self.h, WHITE, U(10))
+    end
+    for i, tw in ipairs(self.tws) do
+        local ly = y + self.pad_y + (i - 1) * self.lh
+        tw:paintTo(bb, x + self.pad_x, ly)
+        local lw = tw:getSize().w   -- the line is as long as its text
+        if self.style == "underline" then
+            paintColorRect(bb, x, ly + self.lh - U(3), lw, U(2), self.color)
+        elseif self.style == "strikethrough" then
+            paintColorRect(bb, x, ly + math.floor(self.lh / 2), lw, U(2), self.color)
+        end
+    end
+end
+
 -- The row of dots at the bottom of one annotation: one for each annotation of
 -- the list, the current one bigger and black.
 local NavDots = Widget:extend{ n = 1, idx = 1, width = 0, height = 0, pitch = 0, r = 2, rmax = 3 }
@@ -4040,10 +4345,10 @@ function KoboldBookDetails:openAnnotationFilter()
         kind_options[#kind_options + 1] = { id = "bookmark", label = withCount(_("Bookmarks"), c.bookmark), icon = "bookmark" }
     end
     if c.highlight > 0 then
-        kind_options[#kind_options + 1] = { id = "highlight", label = withCount(_("Highlights"), c.highlight) }
+        kind_options[#kind_options + 1] = { id = "highlight", label = withCount(_("Highlights"), c.highlight), icon = "highlight" }
     end
     if c.note > 0 then
-        kind_options[#kind_options + 1] = { id = "note", label = withCount(_("Notes"), c.note) }
+        kind_options[#kind_options + 1] = { id = "note", label = withCount(_("Notes"), c.note), icon = "pencil" }
     end
     local kind_row = { label = _("Show"), options = kind_options, selected = f.kind, toggle = true }
     local rows = { kind_row }
@@ -4167,14 +4472,16 @@ function KoboldBookDetails:buildAnnotations(level)
 
     -- Rows: as many as fit, the rest on the next pages.
     local main_face = KoboldWidgets.face(M.font + 2)
-    local meta_face = KoboldWidgets.face(M.font - 1)
+    -- the line under the quote (chapter, page, "Bookmark") is in the secondary font
+    local meta_face = secondaryFace(M.font - 1)
     local probe_main = TextWidget:new{ text = "Ag", face = main_face }
     local probe_meta = TextWidget:new{ text = "Ag", face = meta_face }
     local main_lh, meta_lh = probe_main:getSize().h, probe_meta:getSize().h
     probe_main:free()
     probe_meta:free()
     local row_pad = U(M.row_pad + 3)
-    local row_h = 2 * main_lh + U(3) + meta_lh + 2 * row_pad
+    -- (+ U(4): the pill behind the quote of a highlight has a little room above and below)
+    local row_h = 2 * main_lh + U(4) + U(3) + meta_lh + 2 * row_pad
     local line_h = U(1)
     local card_pad = U(M.card_pad)
     local foot_h = U(M.button)
@@ -4201,7 +4508,7 @@ function KoboldBookDetails:buildAnnotations(level)
         rows[#rows + 1] = CenterContainer:new{
             dimen = Geom:new{ w = card_w, h = empty_h },
             TextWidget:new{
-                text = text, face = italicFace(M.font + 3), bgcolor = SOFT,
+                text = text, face = secondaryFace(M.font + 3), bgcolor = SOFT,
                 fgcolor = KoboldWidgets.subtitleColor(), max_width = card_w - U(20),
             },
         }
@@ -4211,36 +4518,49 @@ function KoboldBookDetails:buildAnnotations(level)
         local icon_sz = U(18)
         local icon_col = badge_d + U(12)
         local chevron_w = U(16)
-        -- A highlight's colour is a small dot that starts the third line (the
-        -- chapter and page), so the quote above keeps the whole width.
-        local dot_d, dot_gap = U(8), U(8)
         for i = first_i, last_i do
             local e = list[i]
             if i > first_i then
                 rows[#rows + 1] = LineWidget:new{ dimen = Geom:new{ w = card_w, h = line_h }, background = LINE }
             end
-            local note_w = e.note and (U(14) + U(8)) or 0
-            local text_w = card_w - icon_col - chevron_w - U(10) - note_w
+            local text_w = card_w - icon_col - chevron_w - U(10)
             local main_text, meta_text = rowTexts(e, f.kind == "note")
-            local main = limitedText(main_text, main_face, text_w, 2, { bgcolor = SOFT })
-            local has_dot = e.kind == "highlight" and e.color
+            local main
+            local pilled = e.kind == "highlight" and e.text and not (f.kind == "note" and e.note)
+            -- every highlight (also underline and strikethrough) names its colour after the
+            -- page, for screens that cannot show it ("invert" has no colour)
+            if e.kind == "highlight" and e.style ~= "invert" and e.color then
+                local cname = Annotations.colorName(e.color)
+                if cname then meta_text = meta_text .. "  ·  " .. cname end
+            end
+            if pilled then
+                -- the quote on a pill of the highlight's colour, as wide as the column
+                -- (underline and strikethrough too: their icon already tells them apart)
+                main = QuotePill:new{
+                    text = main_text, face = main_face, width = text_w,
+                    style = (e.style == "invert") and "invert" or "normal",
+                    color = Annotations.paleColor(e.color),
+                }
+            else
+                -- notes and bookmarks: the same pill, white
+                main = QuotePill:new{ text = main_text, face = main_face, width = text_w, style = "plain" }
+            end
+            -- a pencil starts the line when the annotation has a note (so the quote's
+            -- pill keeps its width)
+            local note_w = e.note and (U(14) + U(6)) or 0
             local meta = TextWidget:new{
                 text = meta_text, face = meta_face, fgcolor = KoboldWidgets.subtitleColor(), bgcolor = SOFT,
-                max_width = has_dot and (text_w - dot_d - dot_gap) or text_w, truncate_with_ellipsis = true,
+                max_width = text_w - note_w, truncate_with_ellipsis = true,
             }
-            if has_dot then
+            if e.note then
                 meta = HorizontalGroup:new{
                     align = "center",
-                    ColorDot:new{ d = dot_d, color = Annotations.resolveColor(e.color) },
-                    HorizontalSpan:new{ width = dot_gap },
+                    OptionSheet.iconWidget("pencil", U(14), KoboldWidgets.subtitleColor()),
+                    HorizontalSpan:new{ width = U(6) },
                     meta,
                 }
             end
             local right = HorizontalGroup:new{ align = "center" }
-            if e.note then
-                right[#right + 1] = OptionSheet.iconWidget("pencil", U(14), KoboldWidgets.subtitleColor())
-                right[#right + 1] = HorizontalSpan:new{ width = U(8) }
-            end
             right[#right + 1] = OptionSheet.iconWidget("chevron-right", chevron_w, KoboldWidgets.subtitleColor())
             rows[#rows + 1] = OverlapGroup:new{
                 dimen = Geom:new{ w = card_w, h = row_h },
@@ -4297,7 +4617,7 @@ function KoboldBookDetails:buildAnnotations(level)
             LeftContainer:new{ dimen = Geom:new{ w = inner_w, h = foot_h }, navPill("chevron-left", page > 1) },
             CenterContainer:new{
                 dimen = Geom:new{ w = inner_w, h = foot_h },
-                TextWidget:new{ text = page .. " / " .. pages, face = KoboldWidgets.face(16), bold = true },
+                TextWidget:new{ text = page .. " / " .. pages, face = KoboldWidgets.secondaryFace(16), bold = true },
             },
             RightContainer:new{ dimen = Geom:new{ w = inner_w, h = foot_h }, navPill("chevron-right", page < pages) },
         }
@@ -4384,14 +4704,14 @@ function KoboldBookDetails:buildAnnotation(level)
         w = close_d + U(12) + pad, h = top_h + pad,
     }
 
-    -- The date, in italics, under the title.
+    -- The date, under the title.
     local sub_gap = U(M.info_gap)
     local date_text = Annotations.formatDate(e.date)
     local date_w
     local date_h = 0
     if date_text then
         date_w = TextWidget:new{
-            text = date_text, face = italicFace(M.font),
+            text = date_text, face = secondaryFace(M.font),
             fgcolor = KoboldWidgets.subtitleColor(), max_width = inner_w,
         }
         date_h = date_w:getSize().h
@@ -4666,6 +4986,12 @@ end
 function KoboldBookDetails:onDetailsSwipe(ges)
     if self.opening then return false end
     local dir = ges.direction
+    if self.view == "details" and self.tab == "synopsis" and self.syn_bar and self.syn_rect
+        and (dir == "north" or dir == "south") and ges.pos and ges.pos:intersectWith(self.syn_rect) then
+        -- up shows the next page of the synopsis, down the one before
+        self:goToSynopsisPage(self.syn.page + (dir == "north" and 1 or -1))
+        return true
+    end
     if self.view == "annotations" then
         if dir == "west" then self:stepAnnotationPage(1) return true end
         if dir == "east" then self:stepAnnotationPage(-1) return true end
@@ -4814,7 +5140,7 @@ function KoboldBookDetails:buildSettings(level)
     local cap_gap, cell_gap, pager_h = U(6), U(8), U(36)
     local btn_h = row_h
     local caption = TextWidget:new{
-        text = _("Plugins"), face = KoboldWidgets.face(M.font), fgcolor = KoboldWidgets.subtitleColor(),
+        text = _("Plugins"), face = KoboldWidgets.secondaryFace(M.font), fgcolor = KoboldWidgets.subtitleColor(),
     }
     local cap_h = caption:getSize().h
     local used = top_h + gap + card_h
@@ -4947,7 +5273,7 @@ function KoboldBookDetails:buildSettings(level)
                 return pill(pager_h, pager_h, SOFT, OptionSheet.iconWidget(icon, U(16), enabled and BLACK or grey))
             end
             local label = TextWidget:new{
-                text = self.set_page .. " / " .. pages, face = KoboldWidgets.face(M.font + 1),
+                text = self.set_page .. " / " .. pages, face = KoboldWidgets.secondaryFace(M.font + 1),
                 fgcolor = KoboldWidgets.subtitleColor(),
             }
             local label_w = label:getSize().w + U(28)
@@ -5155,7 +5481,7 @@ function KoboldBookDetails:buildStable(level)
                     },
                     VerticalSpan:new{ width = U(2) },
                     TextWidget:new{
-                        text = row.detail, face = KoboldWidgets.face(12),
+                        text = row.detail, face = KoboldWidgets.secondaryFace(12),
                         fgcolor = row.locked and grey or KoboldWidgets.subtitleColor(), max_width = card_w - U(48),
                     },
                 },
@@ -5660,9 +5986,14 @@ function KoboldBookDetails:init()
             self:openAnnotations()
         elseif self.edit_rect and pos:intersectWith(self.edit_rect) then
             self:openEdit()
+        elseif self.tab == "synopsis" and self.syn_bar and pos:intersectWith(self.syn_bar.rect) then
+            -- a tap on the bar: the page before (above the knob) or after
+            local th = self.syn_bar.thumb
+            self:goToSynopsisPage(self.syn.page + ((pos.y < th.y) and -1 or 1))
         else
             for id, rect in pairs(self.tab_rects) do
                 if pos:intersectWith(rect) and id ~= self.tab then
+                    self.syn = nil
                     self.tab = id
                     self:refresh()
                     return
@@ -5674,8 +6005,8 @@ function KoboldBookDetails:init()
     KoboldTaps.hold(self, "KoboldDetailsHold", 0, 0, W, H, function(ges)
         if self.view == "editor" then self:onEditorHold(ges.pos) end
     end)
-    -- Swipes in the annotations list and in one annotation. Whatever a widget
-    -- under it takes (the scrolling synopsis, a long note) never gets here.
+    -- Swipes in the annotations list, in one annotation and over the synopsis.
+    -- Whatever a widget under it takes (a long note) never gets here.
     self:registerTouchZones({
         {
             id = "KoboldDetailsSwipe",
@@ -5720,6 +6051,15 @@ function KoboldBookDetails:init()
             handler = function(ges) return self:onEditorSwipe(ges) end,
         },
     })
+    -- Hold the knob of a text's page bar (the editor's field, the synopsis)
+    -- and slide it up or down: the text follows, as the bar of the Library.
+    -- Registered last, so it is asked before the zones above.
+    KoboldWidgets.registerBarDrag(self, {
+        rect = function() local b = self:textBar() return b and b.rect end,
+        bar  = function() local b = self:textBar() return b and b.opts end,
+        top  = function() local b = self:textBar() return b and b.top or 0 end,
+        goTo = function(page) local b = self:textBar() if b then b.goTo(page) end end,
+    })
 end
 
 -- The page keys: in the list they turn its pages, in one annotation they go to
@@ -5730,6 +6070,7 @@ function KoboldBookDetails:onKoboldAnnNext()
     if self.view == "cover" then self:stepCoverPage(1) return true end
     if self.view == "annotations" then self:stepAnnotationPage(1) return true end
     if self.view == "annotation" then self:stepAnnotation(1) return true end
+    if self.view == "editor" then return self:scrollEditorPage(1) end
     return false
 end
 
@@ -5739,6 +6080,7 @@ function KoboldBookDetails:onKoboldAnnPrev()
     if self.view == "cover" then self:stepCoverPage(-1) return true end
     if self.view == "annotations" then self:stepAnnotationPage(-1) return true end
     if self.view == "annotation" then self:stepAnnotation(-1) return true end
+    if self.view == "editor" then return self:scrollEditorPage(-1) end
     return false
 end
 
@@ -5831,12 +6173,23 @@ end
 -- `on_change` runs after the page closes, if Edit changed something.
 -- `hide_koreader` is not used any more. `start_view` (optional) is the screen
 -- the page opens on: "edit" goes straight to Edit (the pencil), as the
--- Library's "Edit book" row does; Back from there returns to the details.
+-- Library's "Edit book" row does; "annotations" goes straight to the list of
+-- annotations (the bookmark), as Home's current book card does. Back from
+-- there returns to the details.
 function KoboldBookDetails.show(file, screen, on_change, hide_koreader, start_view)
-    local w = KoboldBookDetails:new{
+    local opts = {
         file = file, screen = screen, on_change = on_change, hide_koreader = hide_koreader,
         view = start_view == "edit" and "edit" or nil,
     }
+    if start_view == "annotations" then
+        -- the same state openAnnotations() sets, given before the sheet is built
+        local all = Annotations.load(file)
+        opts.view = "annotations"
+        opts.ann_all, opts.ann_counts = all, Annotations.counts(all)
+        opts.ann_filter, opts.ann_list = {}, all
+        opts.ann_page, opts.ann_idx = 1, 1
+    end
+    local w = KoboldBookDetails:new(opts)
     UIManager:show(w, "ui", w.panel_rect)
     require("kobold.ui.refresh").settle(w, function() return w.panel_rect end)
 end

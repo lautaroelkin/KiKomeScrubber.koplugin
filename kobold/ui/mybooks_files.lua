@@ -29,6 +29,7 @@ end
 -- clipboard to copy or move it, or select every book of this folder.
 function Methods:showSelectionMenu(rect)
     if self:inCollection() then return self:showCollectionSelectionMenu(rect) end
+    if self:inUncollected() then return self:showUncollectedSelectionMenu(rect) end
     local n = Clipboard.count()
     local function put(mode)
         if n == 0 then

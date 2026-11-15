@@ -12,15 +12,12 @@ local OverlapGroup    = require("ui/widget/overlapgroup")
 local UIManager       = require("ui/uimanager")
 local VerticalGroup   = require("ui/widget/verticalgroup")
 local VerticalSpan    = require("ui/widget/verticalspan")
+local KoboldMetrics   = require("kobold.ui.metrics")
 local Refresh         = require("kobold.ui.refresh")
 
 local Screen = Device.screen
 
 local KoboldPopup = {}
-
--- Same margin and status bar height as the Kobold screens.
-local function margin() return Screen:scaleBySize(30) end
-local function statusH() return Screen:scaleBySize(40) end
 
 -- Corner radius of the status bar popups: the same rounding as the book menu
 -- (book_menu.lua) and the sheets.
@@ -52,14 +49,16 @@ local function topGap() return Screen:scaleBySize(8) end
 
 -- Top-left corner for a popup left-aligned under the status bar (the clock).
 function KoboldPopup.originLeft()
-    return margin(), margin() + statusH() + topGap()
+    local bar = KoboldMetrics.statusBar()
+    return bar.margin, bar.bottom + topGap()
 end
 
 -- Top-left corner of a box `fw` wide: its right edge lines up with the right
 -- edge of the status bar.
 function KoboldPopup.origin(fw)
-    local x = Screen:getWidth() - margin() - fw
-    local y = margin() + statusH() + topGap()
+    local bar = KoboldMetrics.statusBar()
+    local x = Screen:getWidth() - bar.margin - fw
+    local y = bar.bottom + topGap()
     return x, y
 end
 

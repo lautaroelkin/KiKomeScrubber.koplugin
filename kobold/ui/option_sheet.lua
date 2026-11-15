@@ -210,7 +210,7 @@ function Sheet:build()
         local block = { src = src, chips = {} }
         if src.label then
             block.lbl = keep(TextWidget:new{
-                text = src.label, face = KoboldWidgets.face(14), fgcolor = C_SECONDARY,
+                text = src.label, face = KoboldWidgets.secondaryFace(14), fgcolor = C_SECONDARY,
             })
         end
         local line = 0

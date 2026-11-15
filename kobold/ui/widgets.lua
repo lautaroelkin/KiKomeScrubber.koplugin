@@ -5,7 +5,6 @@ local Blitbuffer      = require("ffi/blitbuffer")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local Device          = require("device")
 local FrameContainer  = require("ui/widget/container/framecontainer")
-local Font            = require("ui/font")
 local Geom            = require("ui/geometry")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan  = require("ui/widget/horizontalspan")
@@ -23,6 +22,7 @@ local OverlapGroup    = require("ui/widget/overlapgroup")
 local KoboldMeta      = require("kobold.meta")
 local KoboldCovers    = require("kobold.data.covers")
 local KoboldPrefs     = require("kobold.data.prefs")
+local KoboldFonts     = require("kobold.data.fonts")
 local KoboldClock     = require("kobold.data.clock")
 local KoboldBattery   = require("kobold.ui.battery")
 local KoboldTaps      = require("kobold.ui.taps")
@@ -42,17 +42,22 @@ function KoboldWidgets.fixed(w, h, child)
     }
 end
 
+-- The plugin has two fonts (Settings > Fonts; KOReader's own font until one is
+-- chosen, see data/fonts.lua). Every text asks for one of these two faces:
+--
+--   face(size)           PRIMARY: most of the text. Titles, names, rows, menus,
+--                        buttons, tabs, chips, the status bar, badges.
+--   secondaryFace(size)  SECONDARY: the details. Authors, book counts, section
+--                        headings, notes and hints, values on the right,
+--                        counters, placeholders.
+--
+-- To move a text from one to the other, change which of the two it calls.
 function KoboldWidgets.face(size)
-    return Font:getFace("cfont", size)
+    return KoboldFonts.face("primary", size)
 end
 
--- Italic serif for menu items, action words and buttons: KOReader's Noto
--- Serif Italic. (KOReader's "infont" is a monospace font, not italic.)
--- Falls back to the normal face when the font file is missing.
-function KoboldWidgets.italicFace(size)
-    local ok, face = pcall(function() return Font:getFace("NotoSerif-Italic.ttf", size) end)
-    if ok and face then return face end
-    return KoboldWidgets.face(size)
+function KoboldWidgets.secondaryFace(size)
+    return KoboldFonts.face("secondary", size)
 end
 
 function KoboldWidgets.bookTitle(file)
@@ -738,6 +743,7 @@ end
 function KoboldWidgets.statusBar(content_w)
     local widths, size, gap, style, battery_icon = statusIconWidths()
     local icons = HorizontalGroup:new{
+        align = "center",
         KoboldWidgets.customIcon("brightness", size, "appbar.contrast"),
         HorizontalSpan:new{ width = gap },
         KoboldWidgets.customIcon(KoboldWidgets.wifiIconName(), size, "wifi.open.100"),
@@ -749,6 +755,7 @@ function KoboldWidgets.statusBar(content_w)
     local clock = clockWidget(clockMaxWidth(content_w))
     local spacer = content_w - clock:getSize().w - icons:getSize().w
     return HorizontalGroup:new{
+        align = "center",
         clock,
         HorizontalSpan:new{ width = math.max(spacer, 0) },
         icons,
@@ -808,7 +815,10 @@ end
 -- `top` (optional) is the y of the bar's top edge; it defaults to `margin`.
 function KoboldWidgets.statusBarFrame(screen, margin, content_w, status_h, top)
     top = top or margin
-    local frame = KoboldWidgets.fixed(content_w, status_h, KoboldWidgets.statusBar(content_w))
+    local frame = CenterContainer:new{
+        dimen = Geom:new{ w = content_w, h = status_h },
+        KoboldWidgets.statusBar(content_w),
+    }
     screen._kobold_status = {
         frame = frame,
         dimen = Geom:new{ x = margin, y = top, w = content_w, h = status_h },

@@ -65,12 +65,12 @@ local function plainRows(items, content_w)
     for _i, item in ipairs(items) do
         if item.section then
             list[#list + 1] = TextWidget:new{
-                text = item.section, face = KoboldWidgets.face(13),
+                text = item.section, face = KoboldWidgets.secondaryFace(13),
                 fgcolor = KoboldWidgets.subtitleColor(),
             }
             list[#list + 1] = VerticalSpan:new{ width = Screen:scaleBySize(6) }
         else
-            local value = TextWidget:new{ text = tostring(item.value or ""), face = KoboldWidgets.face(15) }
+            local value = TextWidget:new{ text = tostring(item.value or ""), face = KoboldWidgets.secondaryFace(15) }
             local left_w = math.max(1, content_w - value:getSize().w - Screen:scaleBySize(12))
             list[#list + 1] = HorizontalGroup:new{
                 align = "top",
@@ -82,7 +82,7 @@ local function plainRows(items, content_w)
             }
             if item.desc then
                 list[#list + 1] = TextBoxWidget:new{
-                    text = item.desc, face = KoboldWidgets.face(13),
+                    text = item.desc, face = KoboldWidgets.secondaryFace(13),
                     fgcolor = KoboldWidgets.subtitleColor(), width = content_w,
                 }
             end
@@ -143,7 +143,7 @@ function KoboldAbout:build()
     })
     page[#page + 1] = centred(content_w, TextWidget:new{
         text = _("Version ") .. tostring(KoboldMeta.VERSION or ""),
-        face = KoboldWidgets.face(14),
+        face = KoboldWidgets.secondaryFace(14),
         fgcolor = KoboldWidgets.subtitleColor(),
     })
     page[#page + 1] = VerticalSpan:new{ width = gap }
@@ -151,7 +151,7 @@ function KoboldAbout:build()
         text = _("A home screen for KOReader that brings back the calm, familiar look of "
             .. "your e-reader's original software. Made out of love for that look: your "
             .. "books up front, quiet pages, and everything one tap away."),
-        face = KoboldWidgets.face(15),
+        face = KoboldWidgets.secondaryFace(15),
         width = content_w,
         alignment = "center",
     }
@@ -187,7 +187,7 @@ function KoboldAbout:build()
     -- is no room for a scannable size.
     local caption = TextWidget:new{
         text = _("Scan to open the project page"),
-        face = KoboldWidgets.face(13),
+        face = KoboldWidgets.secondaryFace(13),
         fgcolor = KoboldWidgets.subtitleColor(),
     }
     page:resetLayout()

@@ -17,17 +17,20 @@ local KoboldMetrics = {}
 
 -- Status bar: one place for every screen. Change these three numbers and the
 -- bar moves on all of them at once.
-local STATUS_MARGIN = 30   -- left / right / top edge, in dp
-local STATUS_HEIGHT = 40
+local STATUS_MARGIN = 30   -- left / right edge, in dp
+local STATUS_TOP    = 14   -- top edge to the status bar, in dp
+local STATUS_HEIGHT = 32
 
 function KoboldMetrics.statusBar()
     local margin = Screen:scaleBySize(STATUS_MARGIN)
+    local top    = Screen:scaleBySize(STATUS_TOP)
+    local h      = Screen:scaleBySize(STATUS_HEIGHT)
     return {
         margin    = margin,                              -- left and right
-        top       = margin,                              -- screen edge to the bar
-        h         = Screen:scaleBySize(STATUS_HEIGHT),
+        top       = top,                                 -- screen edge to the bar
+        h         = h,
         content_w = Screen:getWidth() - 2 * margin,
-        bottom    = margin + Screen:scaleBySize(STATUS_HEIGHT),   -- where it ends
+        bottom    = top + h,                             -- where it ends
     }
 end
 

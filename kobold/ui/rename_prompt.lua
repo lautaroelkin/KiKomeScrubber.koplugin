@@ -321,7 +321,7 @@ function Prompt:rebuild()
     local panel_top = H - kb_h - bottom_air - content_h - border
 
     local hint = self.error and TextWidget:new{
-        text = self.error, face = KoboldWidgets.face(13),
+        text = self.error, face = KoboldWidgets.secondaryFace(13),
         fgcolor = KoboldWidgets.subtitleColor(), max_width = content_w - U(18),
     } or HorizontalSpan:new{ width = 0 }
 

@@ -9,6 +9,9 @@
 --   Authors      one card per author; tap to open it
 --   Collections  your KOReader collections, one card each
 --   Genres       one card per genre (a keyword of the books); off by default
+--   Actions      the reader's own actions as tiles (icon and name), with a "+" tile to
+--                add one; tap runs it, hold edits it (data/custom_actions.lua,
+--                ui/action_flow.lua); off by default
 --
 -- Every chip has its own layout, Grid or List, picked from the adjust button
 -- on the right of the chips. Folders, series, authors, collections and genres show as
@@ -49,11 +52,15 @@ local OptionSheet     = require("kobold.ui.option_sheet")
 local CoverBadge      = require("kobold.ui.cover_badge")
 local Rounded         = require("kobold.ui.rounded")
 local Chips           = require("kobold.data.chips")
+local CustomActions   = require("kobold.data.custom_actions")
+local ActionIcon      = require("kobold.ui.action_icon")
 local BookLang        = require("kobold.data.booklang")
 local Genres          = require("kobold.data.genres")
 local KoboldBookInfo  = require("kobold.data.bookinfo")
 local MyBooksData     = require("kobold.data.mybooks")
 local ViewSheet       = require("kobold.ui.view_sheet")
+local Clipboard       = require("kobold.data.clipboard")
+local OutlinedIcon    = require("kobold.ui.outlined_icon")
 
 local Screen = Device.screen
 local COVER_RATIO = 1.5
@@ -77,7 +84,7 @@ end
 local DEFAULT_LAYOUT = {
     folders = "grid", home = "grid", recent = "list", oldest = "list",
     series = "grid", authors = "grid", collections = "grid",
-    favorites = "grid", tbr = "grid", genres = "grid",
+    favorites = "grid", tbr = "grid", genres = "grid", actions = "grid",
 }
 local LAYOUT_KEY = "kikome_shelf_layouts"
 
@@ -299,6 +306,32 @@ end
 
 function Chip:free() if self.label then self.label:free() end end
 
+-- The tile of a custom action (Actions chip): a rounded grey square with the
+-- action's icon in the middle, or, for the "+" that adds one, a white square
+-- with a thin outline. `icon` is a ready widget.
+local ActionTile = Widget:extend{ size = 0, icon = nil, add = false }
+
+function ActionTile:getSize() return Geom:new{ w = self.size, h = self.size } end
+
+function ActionTile:paintTo(bb, x, y)
+    self.dimen = Geom:new{ x = x, y = y, w = self.size, h = self.size }
+    local radius = math.floor(self.size * 0.22)
+    if self.add then
+        local line = math.max(1, U(1))
+        bb:paintRoundedRect(x, y, self.size, self.size, C_OUTLINE, radius)
+        bb:paintRoundedRect(x + line, y + line, self.size - 2 * line, self.size - 2 * line,
+            WHITE, math.max(1, radius - line))
+    else
+        bb:paintRoundedRect(x, y, self.size, self.size, C_TAG, radius)
+    end
+    if self.icon then
+        local isz = self.icon:getSize()
+        self.icon:paintTo(bb, x + math.floor((self.size - isz.w) / 2), y + math.floor((self.size - isz.h) / 2))
+    end
+end
+
+function ActionTile:free() if self.icon and self.icon.free then self.icon:free() end end
+
 -- "Locked Tomb, The" reads as "The Locked Tomb" (calibre's naming). Display
 -- only: groups keep the raw name so they sort the way the library files them.
 local function flipArticle(name)
@@ -318,6 +351,13 @@ local LibraryShelf = Widget:extend{
     state = nil,  -- { tab, page, drill = { kind, name } } to pick up where it was
 }
 
+-- Title, authors (a list), series and series_index of a book, as the shelves
+-- read them (the cover browser's data with the corrections made in Metadata).
+-- `pending` is true when nothing was read for it yet (the title is then its file name).
+function LibraryShelf.bookMeta(file)
+    return readMeta(file)
+end
+
 function LibraryShelf.invalidateMeta()
     META = {}
     BookLang.forget()
@@ -334,7 +374,10 @@ end
 
 function LibraryShelf:init()
     local st = self.state or {}
-    self.tab  = st.tab or "folders"
+    -- A fresh shelf (coming back from Library, first start) opens on the first
+    -- chip the reader has on in Settings > Shelves, not on a fixed one.
+    self.chips = Chips.enabledList()
+    self.tab  = st.tab or (self.chips[1] and self.chips[1].id) or "folders"
     -- The view (Recent, Oldest, Newest added, Oldest added) is kept per chip:
     -- everything opened inside a chip follows the chip's view.
     self.views = {}
@@ -349,7 +392,6 @@ function LibraryShelf:init()
     if self.tab == "recent" then self.tab = "home"; self.views.home = "recent" end  -- older saved state
     self.page = st.page or 1
     self.path = st.path
-    self.chips = Chips.enabledList()
     if not self:chipOn(self.tab) then
         -- The open chip was turned off in Settings: open the first one on.
         self.tab = self.chips[1] and self.chips[1].id or "home"
@@ -378,11 +420,14 @@ function LibraryShelf:init()
     if st.drill and st.drill.name then
         for _i, g in ipairs(self:computeGroups(st.drill.kind)) do
             if g.name == st.drill.name then
-                self.drill = { kind = st.drill.kind, name = g.name, files = g.files }
+                self.drill = { kind = st.drill.kind, name = g.name, files = g.files, no_collection = g.no_collection }
                 break
             end
         end
     end
+    -- A selection left over from Library's Files tab does not carry over to a
+    -- fresh Home (a rebuild of the same shelf passes its state and keeps it).
+    if not self.state and Clipboard.isSelecting() then Clipboard.exitSelect() end
     self:rebuild()
 end
 
@@ -447,6 +492,15 @@ function LibraryShelf:computeGroups(kind)
                     end
                 end
             end
+            -- "Uncollected": the books that are in no collection (it goes
+            -- when they all are in one; Settings > Shelves > Collections).
+            if Chips.collectionShown(Chips.NO_COLLECTION) then
+                local label = _("Uncollected")
+                for _i, file in ipairs(Chips.filesWithoutCollection(rc, self.files)) do
+                    add(label, file)
+                end
+                if map[label] then map[label].no_collection = true end
+            end
         end
     elseif kind == "genres" then
         -- A book with several keywords stands in each of its genres. Genres
@@ -472,6 +526,8 @@ function LibraryShelf:computeGroups(kind)
     local less = memberLess(kind)
     for _i, g in ipairs(list) do table.sort(g.files, less) end
     table.sort(list, function(a, b)
+        -- "Uncollected" stays at the end
+        if (a.no_collection or false) ~= (b.no_collection or false) then return not a.no_collection end
         if a.last ~= b.last then return a.last > b.last end
         return a.name:lower() < b.name:lower()
     end)
@@ -762,6 +818,9 @@ function LibraryShelf:chipOn(id)
 end
 
 function LibraryShelf:computeItems()
+    if self.tab == "actions" then
+        return "actions", CustomActions.forChip("actions")
+    end
     if self.tab == "folders" and not self.drill then
         local content = self:computeFolder()
         -- Folders stay first, as they are; the books after them follow the view.
@@ -789,8 +848,61 @@ end
 
 -- ── Navigation ─────────────────────────────────────────────────────────────
 function LibraryShelf:setTab(id)
+    -- The selection survives only a tap on Home (Files) while already on it.
+    if id ~= "folders" or self.tab ~= "folders" then Clipboard.exitSelect() end
     self.tab, self.drill, self.page, self.path = id, nil, 1, nil
     self:rebuild()
+end
+
+-- ── Selection mode ─────────────────────────────────────────────────────────
+-- The Home chip (the file browser) and an open collection have what the
+-- Library's Files tab and a collection of its Collections tab have: Select,
+-- copy / move / delete, Paste here, New Folder, Move to <folder>, Add to
+-- <collection>. The work is done by the Library's own methods
+-- (mybooks_files.lua, mybooks_collections.lua), see libraryHost.
+
+-- The folders of the Home chip (not inside a series, author...).
+function LibraryShelf:inFiles()
+    return self.tab == "folders" and not self.drill
+end
+
+-- Inside a real collection of the Collections chip. "Uncollected" is not one.
+function LibraryShelf:inCollection()
+    return self.tab == "collections" and self.drill ~= nil and not self.drill.no_collection
+end
+
+-- Inside "Uncollected" (the books in no collection): it has Select too, to
+-- add several books to collections at once.
+function LibraryShelf:inUncollected()
+    return self.tab == "collections" and self.drill ~= nil and self.drill.no_collection == true
+end
+
+function LibraryShelf:selecting()
+    return (self:inFiles() or self:inCollection() or self:inUncollected()) and Clipboard.isSelecting()
+end
+
+function LibraryShelf:toggleSelect(file)
+    Clipboard.toggle(file)
+    self:rebuild()
+end
+
+function LibraryShelf:exitSelect()
+    Clipboard.exitSelect()
+    self:rebuild()
+end
+
+-- The books Select all ticks: every book of the open folder or collection
+-- (with the status / language filters of the chip), as a list of { file }.
+function LibraryShelf:selectableList()
+    local files = {}
+    if self:inCollection() or self:inUncollected() then
+        files = self:ordered(self.drill.files)
+    elseif self:inFiles() then
+        files = self:ordered(self:computeFolder().books)
+    end
+    local out = {}
+    for _i, file in ipairs(files) do out[#out + 1] = { file = file } end
+    return out
 end
 
 -- Recent, Oldest and the Added views are views of Library, not chips of their own: they share
@@ -840,19 +952,27 @@ function LibraryShelf:setStatus(id)
 end
 
 function LibraryShelf:openGroup(group)
-    if group.path then  -- a folder
+    if group.path then  -- a folder (the selection goes on inside it)
         self.path, self.page = group.path, 1
     else
-        self.drill = { kind = self.tab, name = group.name, files = group.files }
+        Clipboard.exitSelect()
+        self.drill = { kind = self.tab, name = group.name, files = group.files, no_collection = group.no_collection }
         self.page = 1
     end
     self:rebuild()
+end
+
+-- True while there is a step back to take (the Back row is on show): inside a
+-- series / author / collection, or in a folder under the home folder.
+function LibraryShelf:canGoBack()
+    return self.back_w ~= nil
 end
 
 -- One step back: out of a series / author, or up one folder, but never above
 -- the home folder.
 function LibraryShelf:goBack()
     if self.drill then
+        Clipboard.exitSelect()
         self.drill = nil
     elseif self.tab == "folders" and self.path then
         local root = self:rootDir()
@@ -869,6 +989,20 @@ end
 -- Alphabetical and, only when the library has more than one language,
 -- Language. Tapping a chosen option again clears it.
 function LibraryShelf:openLayoutMenu(_anchor)
+    if self.tab == "actions" then
+        -- Actions are not books: only Grid / List apply to them.
+        ViewSheet.show{
+            layout = {
+                selected = layoutFor(self:layoutKey()),
+                on_pick = function(id)
+                    setLayout(self:layoutKey(), id)
+                    self.page = 1
+                    self:rebuild()
+                end,
+            },
+        }
+        return
+    end
     ViewSheet.show{
         layout = {
             selected = layoutFor(self:layoutKey()),
@@ -908,19 +1042,39 @@ function LibraryShelf:makeChip(label, selected, onClick, font_size)
     return { widget = chip, width = chip.width, height = self.chip_h, onClick = onClick }
 end
 
--- Two buttons at the right end of the chips: View options (adjust), and
--- Settings (more). `width` covers both.
+-- The buttons at the right end of the chips, left to right (`width` covers
+-- all of them; each is { name, widget, width }). Move to <folder> and Add to
+-- <collection> are rows of the More menu, not buttons:
+--   every chip               adjust, more
+--   selection mode           act (the Selection menu) and close (the X)
+-- The more button becomes a square-plus while the clipboard holds something
+-- to paste (Home chip), as in the Library's Files tab.
 function LibraryShelf:buildAdjustButton()
-    local icon = iconWidget("adjust", U(24))
-    local btn = FrameContainer:new{
-        bordersize = 0, margin = 0, padding = U(10), icon,
-    }
-    local more = FrameContainer:new{
-        bordersize = 0, margin = 0, padding = U(10),
-        KoboldWidgets.customIcon("more", U(24), "appbar.menu"),
-    }
-    local btn_w, more_w = btn:getSize().w, more:getSize().w
-    return { widget = btn, width = btn_w + more_w, more_widget = more, more_w = more_w }
+    local buttons = {}
+    local function add(name, icon)
+        local is_last = (name == "more" or name == "close")
+        local widget = FrameContainer:new{
+            bordersize = 0, margin = 0,
+            padding_left = U(6), padding_right = is_last and U(4) or U(6),
+            padding_top = U(10), padding_bottom = U(10),
+            icon,
+        }
+        buttons[#buttons + 1] = { name = name, widget = widget, width = widget:getSize().w }
+    end
+    if self:selecting() then
+        add("act", iconWidget("square-arrow-right-enter", U(24), BLACK))
+        add("close", KoboldWidgets.icon("close", U(24)))
+    else
+        add("adjust", iconWidget("adjust", U(24)))
+        if self:inFiles() and Clipboard.hasBoard() then
+            add("more", iconWidget("square-plus", U(24)))
+        else
+            add("more", KoboldWidgets.customIcon("more", U(24), "appbar.menu"))
+        end
+    end
+    local total = 0
+    for _i, b in ipairs(buttons) do total = total + b.width end
+    return { buttons = buttons, width = total }
 end
 
 -- The chips along the top. When they all fit they sit in one row, as before.
@@ -933,7 +1087,18 @@ function LibraryShelf:buildChipBar()
     self.chips = Chips.enabledList()
     self.chip_nav = {}
     local gap = self.chip_gap
-    local avail = self.width - adjust.width - gap
+
+    local page_tag, page_w = nil, 0
+    if (self.total_pages or 1) > 1 then
+        page_tag = TextWidget:new{
+            text = (self.page or 1) .. "|" .. self.total_pages,
+            face = KoboldWidgets.secondaryFace(14),
+            fgcolor = KoboldWidgets.subtitleColor(),
+        }
+        page_w = page_tag:getSize().w + U(8)
+    end
+    local right_w = adjust.width + page_w
+    local avail = self.width - right_w - gap
 
     local function build(size)
         local all, total = {}, 0
@@ -946,11 +1111,14 @@ function LibraryShelf:buildChipBar()
     end
 
     local function finish(row, used)
-        -- the adjust button sits at the right edge
-        local fill = math.max(gap, self.width - used - adjust.width)
+        -- the page indicator and action buttons sit at the right edge
+        local fill = math.max(gap, self.width - used - right_w)
         row[#row + 1] = HorizontalSpan:new{ width = fill }
-        row[#row + 1] = adjust.widget
-        row[#row + 1] = adjust.more_widget
+        if page_tag then
+            row[#row + 1] = page_tag
+            row[#row + 1] = HorizontalSpan:new{ width = U(8) }
+        end
+        for _i, b in ipairs(adjust.buttons) do row[#row + 1] = b.widget end
     end
 
     -- Everything in one row, at the big size or else at the small one.
@@ -1339,6 +1507,12 @@ local function toEntries(kind, items)
         for _i, b in ipairs(items.books) do out[#out + 1] = { kind = "book", data = b } end
     elseif kind == "groups" then
         for _i, g in ipairs(items) do out[#out + 1] = { kind = "card", data = g } end
+    elseif kind == "actions" then
+        -- the actions, then a "+" tile to add one
+        for _i, a in ipairs(items) do out[#out + 1] = { kind = "tile", data = a } end
+        if #items == 0 or not CustomActions.addTileHidden() then
+            out[#out + 1] = { kind = "tile", data = { add = true } }
+        end
     else
         for _i, b in ipairs(items) do out[#out + 1] = { kind = "book", data = b } end
     end
@@ -1362,6 +1536,7 @@ end
 -- the space left on a page becomes empty shelves, and what remains is shared
 -- out as air above each row.
 function LibraryShelf:buildShelves(entries, avail)
+    local selecting = self:selecting()
     self:setColumns(avail)
     local m = self:shelfMetrics(self:fitScale(entries, avail))
     local gap = m.gap
@@ -1450,7 +1625,7 @@ function LibraryShelf:buildShelves(entries, avail)
         local cells, caps, x = HorizontalGroup:new{}, HorizontalGroup:new{}, 0
         for k, e in ipairs(slots) do
             local w = (e.kind == "card") and m.card.w
-                or (e.kind == "book") and m.book.w or r.pad_w
+                or (e.kind == "book" or e.kind == "tile") and m.book.w or r.pad_w
             if e.kind == "card" then
                 local files = e.data.files
                 slot = slot + 1
@@ -1482,7 +1657,48 @@ function LibraryShelf:buildShelves(entries, avail)
                         w = w, h = r.cell_h,
                         rect = { x = 0, y = r.cell_h - sh, w = sw, h = sh },
                         badge = CoverBadge.make(pct, done, onhold),
+                        -- selection mode: a square in the corner (ticked when
+                        -- the book is selected). Home's covers have no "..."
+                        -- button: holding the book opens its menu.
+                        more = selecting and self:selectIcon(Clipboard.isSelected(e.data)) or nil,
+                        more_size = U(24),
                         path = e.data,
+                    },
+                }
+                if r.cap_h > 0 then caps[#caps + 1] = emptySlot(w, r.cap_h) end
+            elseif e.kind == "tile" then
+                -- An action: the tile standing on the board, its name under it.
+                local item = e.data
+                local face = KoboldWidgets.face(14)
+                local line_h = math.floor((face.size or U(14)) * 1.3 + 0.5)
+                local label_h = 2 * line_h
+                local label_gap = U(6)
+                local content_h = w + label_gap + label_h
+                local icon_size = math.floor(w * 0.5)
+                local tile
+                if item.add then
+                    tile = ActionTile:new{ size = w, add = true, icon = iconWidget("plus", icon_size, C_SECONDARY) }
+                else
+                    tile = ActionTile:new{ size = w, icon = ActionIcon.widget(item.icon, icon_size) }
+                end
+                local label = TextBoxWidget:new{
+                    text = item.add and _("Add") or item.name, face = face, width = w,
+                    alignment = "center", height = label_h, height_adjust = true,
+                    height_overflow_show_ellipsis = true,
+                }
+                slot = slot + 1
+                self.page_items[slot], self.page_kinds[slot] = item, "actions"
+                self.item_rects[slot] = {
+                    x = x, y = y + top_gap + math.max(0, r.cell_h - content_h), w = w, h = content_h,
+                }
+                cells[#cells + 1] = OverlapGroup:new{
+                    dimen = Geom:new{ w = w, h = r.cell_h },
+                    VerticalGroup:new{
+                        align = "left",
+                        VerticalSpan:new{ width = math.max(0, r.cell_h - content_h) },
+                        tile,
+                        VerticalSpan:new{ width = label_gap },
+                        KoboldWidgets.fixed(w, label_h, label),
                     },
                 }
                 if r.cap_h > 0 then caps[#caps + 1] = emptySlot(w, r.cap_h) end
@@ -1512,6 +1728,7 @@ end
 -- put their stack of covers where the cover goes and show the name and how
 -- many books they hold. Grey lines separate the folder rows only.
 function LibraryShelf:buildList(entries, avail)
+    local selecting = self:selecting()
     local line_h   = math.max(1, U(1))
     -- The number of rows that fits best is chosen, and the covers grow or
     -- shrink a little so those rows fill the page exactly. A row is the cover
@@ -1552,8 +1769,10 @@ function LibraryShelf:buildList(entries, avail)
             height = 2 * tline_h, height_adjust = true, height_overflow_show_ellipsis = true,
         }
     end
-    local function grey(text, size, w)
-        return TextWidget:new{ text = text, face = KoboldWidgets.face(size), fgcolor = C_SECONDARY, max_width = w or text_w }
+    -- `secondary`: the text is in the secondary font (authors, "N books").
+    local function grey(text, size, w, secondary)
+        local face = secondary and KoboldWidgets.secondaryFace(size) or KoboldWidgets.face(size)
+        return TextWidget:new{ text = text, face = face, fgcolor = C_SECONDARY, max_width = w or text_w }
     end
 
     local out = {}
@@ -1568,18 +1787,43 @@ function LibraryShelf:buildList(entries, avail)
                 align = "left",
                 titleWidget(flipArticle(e.data.name), card_text_w),
                 VerticalSpan:new{ width = gap },
-                grey(count .. (count == 1 and " book" or " books"), 14, card_text_w),
+                grey(count .. (count == 1 and " book" or " books"), 14, card_text_w, true),
             }
             thumb_box = LeftContainer:new{ dimen = Geom:new{ w = col_w, h = thumb_h }, thumb }
             self.page_kinds[r] = "cards"
+        elseif e.kind == "tile" then
+            -- An action: its tile where the cover goes, the name and what it runs.
+            local item = e.data
+            local side = math.floor(thumb_h * 0.8)
+            local icon_size = math.floor(side * 0.5)
+            local tile
+            if item.add then
+                tile = ActionTile:new{ size = side, add = true, icon = iconWidget("plus", icon_size, C_SECONDARY) }
+            else
+                tile = ActionTile:new{ size = side, icon = ActionIcon.widget(item.icon, icon_size) }
+            end
+            texts = VerticalGroup:new{
+                align = "left",
+                titleWidget(item.add and _("Add an action") or item.name, card_text_w),
+                VerticalSpan:new{ width = gap },
+                grey(item.add and _("Choose what it runs, a name and an icon.")
+                    or CustomActions.describe(item), 14, card_text_w, true),
+            }
+            thumb_box = LeftContainer:new{
+                dimen = Geom:new{ w = col_w, h = thumb_h },
+                CenterContainer:new{ dimen = Geom:new{ w = col_w, h = thumb_h }, tile },
+            }
+            self.page_kinds[r] = "actions"
         else
             local file = e.data
             local m = readMeta(file)
+            -- in selection mode the box on the right takes the room of the arrow
+            local tw_text = selecting and card_text_w or text_w
             thumb = Rounded.cover(file, book_w, thumb_h, { outline = true })
-            texts = VerticalGroup:new{ align = "left", titleWidget(m.title) }
+            texts = VerticalGroup:new{ align = "left", titleWidget(m.title, tw_text) }
             if m.authors[1] then
                 texts[#texts + 1] = VerticalSpan:new{ width = gap }
-                texts[#texts + 1] = grey(m.authors[1], 14)
+                texts[#texts + 1] = grey(m.authors[1], 14, tw_text, true)
             end
             local pct, done, onhold = readState(file)
             if onhold then
@@ -1609,7 +1853,7 @@ function LibraryShelf:buildList(entries, avail)
             elseif pct then
                 local label = grey(string.format(_("%d%% Read"), math.floor(pct * 100 + 0.5)), 13)
                 local space = U(14)
-                local bar_w = math.min(U(110), text_w - label:getSize().w - space)
+                local bar_w = math.min(U(110), tw_text - label:getSize().w - space)
                 texts[#texts + 1] = VerticalSpan:new{ width = gap }
                 texts[#texts + 1] = HorizontalGroup:new{
                     align = "center",
@@ -1640,12 +1884,21 @@ function LibraryShelf:buildList(entries, avail)
         local row = HorizontalGroup:new{
             thumb_box,
             HorizontalSpan:new{ width = text_gap },
-            LeftContainer:new{ dimen = Geom:new{ w = (e.kind == "card") and card_text_w or text_w, h = thumb_h }, texts },
+            LeftContainer:new{
+                dimen = Geom:new{ w = (e.kind == "card" or (e.kind == "book" and selecting)) and card_text_w or text_w, h = thumb_h },
+                texts,
+            },
         }
         if e.kind == "card" then
             row[#row + 1] = RightContainer:new{
                 dimen = Geom:new{ w = arrow_w, h = thumb_h },
                 iconWidget("chevron-right", U(16), C_SECONDARY),
+            }
+        elseif e.kind == "book" and selecting then
+            -- selection mode: a box, ticked when the book is selected
+            row[#row + 1] = RightContainer:new{
+                dimen = Geom:new{ w = arrow_w, h = thumb_h },
+                iconWidget(Clipboard.isSelected(e.data) and "square-dot" or "square", U(26), BLACK),
             }
         end
         out[#out + 1] = VerticalSpan:new{ width = margin }
@@ -1667,8 +1920,6 @@ end
 function LibraryShelf:rebuild()
     self:syncView()
     self.needs_tap_registration = true
-    local chip_row, main_chips = self:buildChipBar()
-    self.main_chips = main_chips
 
     local kind, items = self:computeItems()
     local header = self:buildHeader()
@@ -1710,13 +1961,16 @@ function LibraryShelf:rebuild()
         body = VerticalGroup:new{
             align = "left",
             VerticalSpan:new{ width = Screen:scaleBySize(24) },
-            TextWidget:new{ text = msg, face = KoboldWidgets.face(16), max_width = self.width },
+            TextWidget:new{ text = msg, face = KoboldWidgets.secondaryFace(16), max_width = self.width },
         }
     elseif layoutFor(self:layoutKey()) == "list" then
         body = self:buildList(entries, avail)
     else
         body = self:buildShelves(entries, avail)
     end
+
+    local chip_row, main_chips = self:buildChipBar()
+    self.main_chips = main_chips
 
     local children = {
         align = "left",
@@ -1737,17 +1991,93 @@ function LibraryShelf:rebuild()
     end
 end
 
+-- The square of selection mode over a cover: empty, or ticked (square-dot)
+-- when the book is selected. The same outline as the Library's.
+function LibraryShelf:selectIcon(selected)
+    self.select_icons = self.select_icons or {}
+    local name = selected and "square-dot" or "square"
+    if not self.select_icons[name] then
+        self.select_icons[name] = OutlinedIcon:new{ name = name, size = U(24) }
+    end
+    return self.select_icons[name]
+end
+
 -- ── More menu ──────────────────────────────────────────────────────────────
--- The more button of Home: Refresh library and Settings (the same two rows as
--- the More menu of Library's Books tab). `anchor` is the button's rectangle.
+-- The more button of Home. The Home chip and an open collection have the rows
+-- of the Library's More menu (Select, New Folder, Paste here, Clear clipboard)
+-- and the Collections chip its Add collection; every chip keeps Refresh
+-- library, then Settings. `anchor` is the button's rectangle.
 function LibraryShelf:openMoreMenu(anchor)
     local _ = require("kobold.i18n")
-    local items = {
-        { text = _("Refresh library"), icon = { "refresh-cw", "undo" },
-          action = function() self:refreshLibrary() end },
-        { text = _("Settings"), icon = { "settings", "settings-2" },
-          action = function() require("kobold.ui.settings").show() end },
-    }
+    local items = {}
+    local function enterSelect()
+        Clipboard.enterSelect()
+        self:rebuild()
+    end
+    if self.tab == "actions" then
+        -- Actions chip: hide (or show again) the "+" tile at the end; while it
+        -- is hidden an "Add an action" row stands in for it.
+        local hidden = CustomActions.addTileHidden()
+        items[#items + 1] = {
+            text = hidden and _("Show Add tile") or _("Hide Add tile"),
+            icon = hidden and "square-plus" or "square-minus",
+            action = function()
+                CustomActions.setAddTileHidden(not hidden)
+                self:actionsChanged()
+            end,
+        }
+        if hidden then
+            items[#items + 1] = {
+                text = _("Add an action"), icon = "plus",
+                action = function() self:tapAction({ add = true }) end,
+            }
+        end
+    elseif self:inCollection() then
+        -- Inside a collection: Select, to take several books out at once, and
+        -- Add to <collection> (the Library's plus).
+        items[#items + 1] = { text = _("Select"), icon = { "crop", "square-dot" }, action = enterSelect }
+        local group = self:libraryHost().group
+        items[#items + 1] = { text = string.format(_("Add to %s"), group and group.name or self.drill.name),
+            icon = "square-plus",
+            action = function() self:libraryHost():addBookToCollection() end }
+    elseif self:inUncollected() then
+        -- Uncollected: Select, to add several books to collections at once.
+        items[#items + 1] = { text = _("Select"), icon = { "crop", "square-dot" }, action = enterSelect }
+    elseif self:inFiles() then
+        -- Select only exists while the clipboard is empty: with a pending copy /
+        -- move, clear it (or paste) first.
+        if not Clipboard.hasBoard() then
+            items[#items + 1] = { text = _("Select"), icon = { "crop", "square-dot" }, action = enterSelect }
+        end
+        items[#items + 1] = { text = _("New Folder"), icon = { "Folder", "folder" },
+            action = function() self:libraryHost():newFolder() end }
+        -- Move to <folder> (the Library's plus of the Files tab): books go into
+        -- the folder that is open.
+        local folder = self:libraryHost():currentFolder()
+        items[#items + 1] = { text = string.format(_("Move to %s"), folder:match("([^/]+)/*$") or folder),
+            icon = "plus",
+            action = function() self:libraryHost():moveToFolder() end }
+        if Clipboard.hasBoard() then
+            local board = Clipboard.board()
+            items[#items + 1] = { text = string.format(_("Paste here (%d)"), #board.paths),
+                icon = { "2square-arrow-right-enter", "square-arrow-right-enter" },
+                action = function() self:libraryHost():pasteHere() end }
+            items[#items + 1] = { text = _("Clear clipboard"), icon = { "undo", "trash-2" },
+                action = function()
+                    Clipboard.clear()
+                    self:rebuild()
+                end }
+        end
+    elseif self.tab == "collections" and not self.drill then
+        -- The Collections chip has no room for a button like the Library's
+        -- "Add collection" pill: it is a row here.
+        items[#items + 1] = { text = _("Add collection"), icon = "plus",
+            action = function() self:libraryHost():newCollection() end }
+    end
+    items[#items + 1] = { text = _("Refresh library"), icon = { "refresh-cw", "undo" },
+          action = function() self:refreshLibrary() end }
+    items[#items + 1] = { text = _("Settings"), icon = { "settings", "settings-2" },
+          action = function() require("kobold.ui.settings").show() end }
     require("kobold.ui.book_menu").show{
         screen = self.home, anchor = anchor, align = "right", items = items,
     }
@@ -1790,12 +2120,30 @@ function LibraryShelf:cardHasMenu(item)
     return self.tab == "collections" and not self.drill and item.name ~= nil
 end
 
--- The Library's folder and collection menus are methods of its screen
--- (mybooks_files.lua, mybooks_collections.lua) that only need a few things of
--- it; this stands in for that screen, wired to Home and to this shelf.
+-- The shelf that is on Home now: Home makes a new one whenever it reloads.
+function LibraryShelf:live()
+    return (self.home and self.home.library_shelf) or self
+end
+
+-- The name a collection shows: its own, or "Favorites" for KOReader's default one.
+local function collectionTitle(key)
+    local ok, RC = pcall(require, "readcollection")
+    if ok and RC and key == (RC.default_collection_name or "favorites") then
+        return require("kobold.i18n")("Favorites")
+    end
+    return key
+end
+
+-- The Library's folder, collection and selection actions are methods of its
+-- screen (mybooks_files.lua, mybooks_collections.lua) that only need a few
+-- things of it; this stands in for that screen, wired to Home and to this
+-- shelf: the folder that is open, the open collection (`group`), the books
+-- Select all ticks (`list`) and how to redraw.
 function LibraryShelf:libraryHost(item)
     local shelf, home = self, self.home
-    local host = {}
+    -- the methods read the "N books" text that mybooks.lua gives them when it loads
+    require("kobold.ui.mybooks")
+    local host = { is_home_host = true }   -- Disable collection turns off Home's switch
     function host:reload()
         KoboldLibrary.invalidate()
         BookLang.forget()
@@ -1805,11 +2153,30 @@ function LibraryShelf:libraryHost(item)
     function host:scheduleReload()
         UIManager:nextTick(function() host:reload() end)
     end
+    function host:refresh() shelf:live():rebuild() end
+    function host:refreshList() shelf:live():rebuild() end
+    function host:inCollection() return shelf:live():inCollection() end
+    function host:inUncollected() return shelf:live():inUncollected() end
     function host:openFolder(dir)
-        shelf:openGroup({ path = dir, name = baseName(dir) })
+        shelf:live():openGroup({ path = dir, name = baseName(dir) })
     end
     function host:openGroup(_group)
-        shelf:openGroup(item)
+        shelf:live():openGroup(item)
+    end
+    -- A collection was made: Home is built again, now with it, and opens it.
+    function host:openCollection(name)
+        host:reload()
+        local s = shelf:live()
+        s.tab, s.drill, s.path = "collections", nil, nil
+        s.groups_cache = {}
+        for _i, g in ipairs(s:computeGroups("collections")) do
+            if g.name == name then
+                s:openGroup(g)
+                return
+            end
+        end
+        s.page = 1
+        s:rebuild()
     end
     -- addBookToCollection reads the library's books; they are loaded only then.
     return setmetatable(host, { __index = function(t, k)
@@ -1817,6 +2184,15 @@ function LibraryShelf:libraryHost(item)
             local books = MyBooksData.getBooks()
             rawset(t, "books", books)
             return books
+        elseif k == "list" then
+            return shelf:live():selectableList()
+        elseif k == "folder" then
+            return shelf:live().path
+        elseif k == "group" then
+            local s = shelf:live()
+            if not s:inCollection() then return nil end
+            local key = tostring(s.drill.name)
+            return { key = key, name = collectionTitle(key) }
         end
         -- the folder and collection actions of the Library screen, as they are
         local files = require("kobold.ui.mybooks_files")
@@ -1831,16 +2207,81 @@ function LibraryShelf:holdCard(item, anchor)
     local align = anchor.x < W / 2 and "left" or "right"
     if item.path then
         host:showFolderMenu(item.path, anchor, align)
+    elseif item.no_collection then
+        -- "Uncollected" is a list, not a collection: its menu opens it or
+        -- disables it (Settings brings it back)
+        host:showCollectionOptions(item, anchor, align)
     else
         -- the collection as the Library's group: its key and its shown name
         local key = tostring(item.name)
-        local title = key
-        local ok, RC = pcall(require, "readcollection")
-        if ok and RC and key == (RC.default_collection_name or "favorites") then
-            title = require("kobold.i18n")("Favorites")
-        end
-        host:showCollectionOptions({ key = key, name = title }, anchor, align)
+        host:showCollectionOptions({ key = key, name = collectionTitle(key) }, anchor, align)
     end
+end
+
+-- Long-press on a book of the Home chip or of an open collection: the same
+-- menu as holding it in the Library's Files tab or inside a collection (Read
+-- now, View Details, Select, Edit book and, in a collection, Remove from
+-- collection). Everywhere else a hold opens the details page directly.
+function LibraryShelf:holdBook(file, anchor)
+    local host = self:libraryHost()
+    local W = Screen:getWidth()
+    local on_remove, on_select, on_add_to_collection
+    -- Uncollected: add this book to collections without going through Select.
+    if self:inUncollected() then
+        on_add_to_collection = function() host:addSelectedToCollections({ file }) end
+    end
+    if self:inCollection() then
+        on_remove = function()
+            local ok, m = pcall(LibraryShelf.bookMeta, file)
+            host:confirmRemoveFromCollection({
+                file = file, title = (ok and type(m) == "table" and m.title) or fileStem(file),
+            })
+        end
+    end
+    -- Select: on the Home chip (while the clipboard is empty) and inside a collection.
+    if (self:inFiles() and not Clipboard.hasBoard()) or self:inCollection() or self:inUncollected() then
+        on_select = function()
+            Clipboard.enterSelect()
+            Clipboard.add(file)
+            self:live():rebuild()
+        end
+    end
+    require("kobold.ui.book_menu").show{
+        file = file, screen = self.home, anchor = anchor,
+        align = anchor.x < W / 2 and "left" or "right",
+        on_remove = on_remove, on_select = on_select,
+        on_add_to_collection = on_add_to_collection,
+        koreader = true,   -- Edit book, as in the Library
+        on_change = function() host:scheduleReload() end,
+    }
+end
+
+-- ── Actions chip ───────────────────────────────────────────────────────────
+-- Home may have made a new shelf while a screen of the flow was open: the
+-- change is drawn on the one that is on Home now.
+function LibraryShelf:actionsChanged()
+    local shelf = (self.home and self.home.library_shelf) or self
+    shelf:rebuild()
+end
+
+-- A tile was tapped: the "+" starts a new action, any other runs its action.
+function LibraryShelf:tapAction(item)
+    if item.add then
+        require("kobold.ui.action_flow").add(function() self:actionsChanged() end)
+    else
+        CustomActions.run(item.id)
+    end
+end
+
+-- A tile was held: the small menu (Rename, Change icon, ..., Delete).
+function LibraryShelf:holdAction(item, anchor)
+    if item.add then return end
+    local W = Screen:getWidth()
+    require("kobold.ui.action_flow").menu{
+        screen = self.home, anchor = anchor,
+        align = anchor.x < W / 2 and "left" or "right",
+        action = item, on_change = function() self:actionsChanged() end,
+    }
 end
 
 function LibraryShelf:registerTaps()
@@ -1869,22 +2310,32 @@ function LibraryShelf:registerTaps()
         end
     end
 
-    local ad = self.adjust and self.adjust.widget.dimen
-    if ad then
-        KoboldTaps.add(home, "shelf_adjust", ad.x, ad.y, ad.w, ad.h, function() self:openLayoutMenu(ad) end)
-    else
-        park(home, "shelf_adjust")
+    -- The buttons at the right end of the chips (adjust, more, and in
+    -- selection mode act and close): each one a zone, the others parked.
+    local function rect_of(b) return Geom:new{ x = b.widget.dimen.x, y = b.widget.dimen.y, w = b.widget.dimen.w, h = b.widget.dimen.h } end
+    local button_actions = {
+        adjust = function(r) self:openLayoutMenu(r) end,
+        more = function(r) self:openMoreMenu(r) end,
+        act = function(r) self:libraryHost():showSelectionMenu(r) end,
+        close = function(_r) self:exitSelect() end,
+    }
+    local by_name = {}
+    for _i, b in ipairs(self.adjust and self.adjust.buttons or {}) do by_name[b.name] = b end
+    for _i, name in ipairs({ "adjust", "more", "act", "close" }) do
+        local b = by_name[name]
+        local d = b and b.widget.dimen
+        if d then
+            KoboldTaps.add(home, "shelf_btn_" .. name, d.x, d.y, d.w, d.h, function()
+                button_actions[name](rect_of(b))
+            end)
+        else
+            park(home, "shelf_btn_" .. name)
+        end
     end
-
-    -- The more button opens a small menu: Refresh library and Settings.
-    local mr = self.adjust and self.adjust.more_widget and self.adjust.more_widget.dimen
-    if mr then
-        KoboldTaps.add(home, "shelf_more", mr.x, mr.y, mr.w, mr.h, function()
-            self:openMoreMenu(Geom:new{ x = mr.x, y = mr.y, w = mr.w, h = mr.h })
-        end)
-    else
-        park(home, "shelf_more")
-    end
+    -- (the zones of the two-button version are never used again)
+    park(home, "shelf_adjust")
+    park(home, "shelf_more")
+    park(home, "shelf_btn_plus")   -- there is no plus button on Home
 
     -- The whole Back row answers (arrow, word and name), not just its left end.
     if self.back_w then
@@ -1907,20 +2358,35 @@ function LibraryShelf:registerTaps()
             local x, y, w, h = ox + rc.x, oy + rc.y, rc.w, rc.h
             if kind == "cards" then
                 KoboldTaps.add(home, "shelf_grid_" .. i, x, y, w, h, function() self:openGroup(item) end)
-                if self:cardHasMenu(item) then
+                if self:cardHasMenu(item) and not self:selecting() then
                     KoboldTaps.hold(home, "shelf_grid_hold_" .. i, x, y, w, h, function()
                         self:holdCard(item, Geom:new{ x = x, y = y, w = w, h = h })
                     end)
                 else
                     parkHold(home, "shelf_grid_hold_" .. i)
                 end
+            elseif kind == "actions" then
+                KoboldTaps.add(home, "shelf_grid_" .. i, x, y, w, h, function() self:tapAction(item) end)
+                if item.add then
+                    parkHold(home, "shelf_grid_hold_" .. i)
+                else
+                    KoboldTaps.hold(home, "shelf_grid_hold_" .. i, x, y, w, h, function()
+                        self:holdAction(item, Geom:new{ x = x, y = y, w = w, h = h })
+                    end)
+                end
             else
                 KoboldTaps.add(home, "shelf_grid_" .. i, x, y, w, h, function()
+                    -- selection mode: a tap anywhere on a book ticks it
+                    if self:selecting() then self:toggleSelect(item) return end
                     if self.onTapFile then self.onTapFile(item) end
                 end)
                 KoboldTaps.hold(home, "shelf_grid_hold_" .. i, x, y, w, h, function()
-                    if self.onHoldFile then
-                        self.onHoldFile(item, Geom:new{ x = x, y = y, w = w, h = h })
+                    local anchor = Geom:new{ x = x, y = y, w = w, h = h }
+                    if self:selecting() then self:toggleSelect(item) return end
+                    if self:inFiles() or self:inCollection() or self:inUncollected() then
+                        self:holdBook(item, anchor)
+                    elseif self.onHoldFile then
+                        self.onHoldFile(item, anchor)
                     end
                 end)
             end

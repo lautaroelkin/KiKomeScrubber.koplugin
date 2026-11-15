@@ -274,7 +274,7 @@ function Keyboard:build(width)
             w = TextWidget:new{ text = "´", face = KoboldWidgets.face(24), fgcolor = self.accent and WHITE or BLACK }
         elseif k == "space" then
             bg = pressed and C_PRESSED or C_KEY
-            w = TextWidget:new{ text = _("space"), face = KoboldWidgets.face(15), fgcolor = C_PLACEHOLDER }
+            w = TextWidget:new{ text = _("space"), face = KoboldWidgets.secondaryFace(15), fgcolor = C_PLACEHOLDER }
         elseif k == "enter" then
             bg = pressed and C_PRESSED or C_SPECIAL
             w = OptionSheet.iconWidget("corner-down-left", U(26), BLACK)

@@ -5,7 +5,11 @@
 -- Between the two tabs, centred on the bar line, sits a small cover of the
 -- book opened last, on a white backing that cuts the line. Tapping it opens
 -- that book. With Settings > Home > Rounded corners on, the cover and its
--- backing have rounded corners.
+-- backing have rounded corners. Home leaves it out while its current book card
+-- shows (Settings > Home > Top of Home), since that is the same book.
+-- The selected tab uses the filled version of its icon (home-filled.svg,
+-- my-books-filled.svg). The page indicator sits on a subtle gray pill; with no
+-- mini cover it is larger and centred vertically in the bar.
 
 local _ = require("kobold.i18n")
 local Blitbuffer      = require("ffi/blitbuffer")
@@ -23,6 +27,7 @@ local VerticalGroup   = require("ui/widget/verticalgroup")
 local VerticalSpan    = require("ui/widget/verticalspan")
 local Widget          = require("ui/widget/widget")
 local lfs             = require("libs/libkoreader-lfs")
+local KoboldMeta      = require("kobold.meta")
 local KoboldRouter    = require("kobold.ui.router")
 local Rounded         = require("kobold.ui.rounded")
 local KoboldTaps      = require("kobold.ui.taps")
@@ -39,8 +44,20 @@ local TABS = {
     { id = "books", text = _("Library"), icon = "my-books", fallback = "library", event = "NavBooks" },
 }
 
+-- The icon of a tab: the filled one (`<icon>-filled.svg`) when the tab is
+-- selected and the file exists, the regular one otherwise.
+local function tabIcon(tab, selected, size)
+    if selected then
+        local ok, path = pcall(KoboldMeta.icon, tab.icon .. "-filled.svg")
+        if ok and path and lfs.attributes(path, "mode") == "file" then
+            return KoboldWidgets.customIcon(tab.icon .. "-filled", size, tab.fallback)
+        end
+    end
+    return KoboldWidgets.customIcon(tab.icon, size, tab.fallback)
+end
+
 function KoboldNav.height()
-    return Screen:scaleBySize(72)
+    return Screen:scaleBySize(58)
 end
 
 -- The bar above one tab: black when the tab is selected, light gray otherwise.
@@ -69,37 +86,6 @@ local function openBook(screen, file)
     return true
 end
 
--- The page and the page count a screen shows: the screen's own getPageInfo()
--- (My Books), or the Home shelf's. nil when there is nothing to show.
-local function pageInfo(screen)
-    if not screen then return nil end
-    if screen.getPageInfo then return screen:getPageInfo() end
-    local shelf = screen.library_shelf
-    if shelf then return shelf.page or 1, shelf.total_pages or 1 end
-    return nil
-end
-
--- The page indicator ("1|3"), small and centred under the mini cover. It
--- reads the page when it paints, so it follows page turns without the screen
--- being rebuilt. Nothing is drawn when there is one page.
-local PageTag = Widget:extend{ screen = nil, width = 0, height = 0 }
-
-function PageTag:getSize() return Geom:new{ w = self.width, h = self.height } end
-
-function PageTag:paintTo(bb, x, y)
-    self.dimen = Geom:new{ x = x, y = y, w = self.width, h = self.height }
-    local page, total = pageInfo(self.screen)
-    if not page or (total or 1) <= 1 then return end
-    local tw = TextWidget:new{
-        text = page .. "|" .. total,
-        face = KoboldWidgets.face(13),
-        fgcolor = KoboldWidgets.subtitleColor(),
-    }
-    local sz = tw:getSize()
-    tw:paintTo(bb, x + math.floor((self.width - sz.w) / 2), y + math.floor((self.height - sz.h) / 2))
-    tw:free()
-end
-
 -- The small cover between the tabs. It straddles the line above the tabs:
 -- half over it, half inside the bar, on a white backing that cuts the line
 -- and outlines the cover. Returns nil when there is no book yet; otherwise the
@@ -108,7 +94,7 @@ local function lastBookCover(W, nav_top, bar_h)
     local file = lastBookFile()
     if not file then return nil, nil end
     local pad     = Screen:scaleBySize(4)
-    local cover_h = Screen:scaleBySize(74)
+    local cover_h = Screen:scaleBySize(68)
     local cover_w = math.floor(cover_h / 1.5)
     local box_w, box_h = cover_w + 2 * pad, cover_h + 2 * pad
     -- A book with no cover gets a plain block: makeCover leaves the title off
@@ -136,7 +122,9 @@ end
 
 -- Registers the tab tap zones on `screen` (sized W x H) and returns the nav
 -- widget, pushed to the bottom edge. Use it inside an OverlapGroup.
-function KoboldNav.attach(screen, W, H, active)
+-- `opts.no_cover` leaves the mini cover out (Home does when its current book
+-- card shows the same book).
+function KoboldNav.attach(screen, W, H, active, opts)
     local nav_h = KoboldNav.height()
     local bar_h = Screen:scaleBySize(3)
     local tab_w = math.floor(W / #TABS)
@@ -145,11 +133,17 @@ function KoboldNav.attach(screen, W, H, active)
     -- The mini cover opens the last book. Its zone is registered before the
     -- tabs', and the tab zones hand a tap that lands on the cover to it too,
     -- since the cover sits over the line between them.
-    local cover, cover_bottom, cover_file, cover_rect = lastBookCover(W, nav_top, bar_h)
+    local cover, cover_bottom, cover_file, cover_rect
+    if not (opts and opts.no_cover) then
+        cover, cover_bottom, cover_file, cover_rect = lastBookCover(W, nav_top, bar_h)
+    end
     if cover then
         KoboldTaps.add(screen, "NavLastBook", cover_rect.x, cover_rect.y, cover_rect.w, cover_rect.h, function()
             return openBook(screen, cover_file)
         end)
+    else
+        -- a zone of an earlier build (with the cover) must not stay: an empty one replaces it
+        KoboldTaps.add(screen, "NavLastBook", 0, 0, 0, 0, function() end)
     end
 
     local row = HorizontalGroup:new{}
@@ -166,15 +160,7 @@ function KoboldNav.attach(screen, W, H, active)
             tabBar(tab_w, bar_h, selected),
             CenterContainer:new{
                 dimen = Geom:new{ w = tab_w, h = nav_h - bar_h },
-                VerticalGroup:new{
-                    KoboldWidgets.customIcon(tab.icon, Screen:scaleBySize(24), tab.fallback),
-                    VerticalSpan:new{ width = Screen:scaleBySize(3) },
-                    TextWidget:new{
-                        text = tab.text,
-                        face = KoboldWidgets.face(16),
-                        bold = selected,
-                    },
-                },
+                tabIcon(tab, selected, Screen:scaleBySize(26)),
             },
         }
     end
@@ -183,7 +169,7 @@ function KoboldNav.attach(screen, W, H, active)
     local stack = OverlapGroup:new{ dimen = Geom:new{ w = W, h = H } }
     -- A solid white backing under the whole bar (and a little above it, for
     -- the mini cover), so nothing of the list or grid behind it shows through
-    -- the icons and labels, in any orientation.
+    -- the icons, in any orientation.
     local back = LineWidget:new{
         dimen = Geom:new{ w = W, h = nav_h },
         background = Blitbuffer.COLOR_WHITE,
@@ -202,13 +188,6 @@ function KoboldNav.attach(screen, W, H, active)
     stack[#stack + 1] = row
     -- after the row, so the backing sits on top of the line
     if cover then stack[#stack + 1] = cover end
-
-    -- Page indicator under the cover (or just under the line when there is none).
-    local tag_h = Screen:scaleBySize(18)
-    local tag_y = math.min((cover_bottom or (nav_top + bar_h)) + Screen:scaleBySize(1), H - tag_h)
-    local tag = PageTag:new{ screen = screen, width = W, height = tag_h }
-    tag.overlap_offset = { 0, tag_y }
-    stack[#stack + 1] = tag
     return stack
 end
 

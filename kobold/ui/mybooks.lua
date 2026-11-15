@@ -322,7 +322,7 @@ function KoboldMyBooks:layoutRows()
     local face_title = KoboldWidgets.face(17)
     local two = TextBoxWidget:new{ text = "A\nA", face = face_title, width = L.text_w }
     local one = TextBoxWidget:new{ text = "A", face = face_title, width = L.text_w }
-    local author_h = TextWidget:new{ text = "Ag", face = KoboldWidgets.face(14) }:getSize().h
+    local author_h = TextWidget:new{ text = "Ag", face = KoboldWidgets.secondaryFace(14) }:getSize().h
         + Screen:scaleBySize(4)
     -- Room for the series line too (shown for books in a series).
     author_h = author_h + TextWidget:new{ text = "AG", face = KoboldWidgets.face(12) }:getSize().h
@@ -343,7 +343,7 @@ function KoboldMyBooks:init()
         -- Page-turn buttons (on the device or a connected remote) move
         -- through the list like swipes do.
         self.key_events = {
-            Close = { { Device.input.group.Back } },
+            Back = { { Device.input.group.Back } },
             NextListPage = { { Device.input.group.PgFwd } },
             PrevListPage = { { Device.input.group.PgBack } },
         }
@@ -384,6 +384,7 @@ function KoboldMyBooks:setupLayout()
     local L = {
         W = W, H = H,
         margin     = margin,
+        top        = bar.top,
         content_w  = W - 2 * margin,
         status_h   = bar.h,
         tabs_gap   = Screen:scaleBySize(12),
@@ -408,7 +409,7 @@ function KoboldMyBooks:setupLayout()
         dots_w     = Screen:scaleBySize(64),  -- tap width of a row's "…"
         chevron    = Screen:scaleBySize(24),
     }
-    L.y_tabs   = margin + L.status_h + L.tabs_gap
+    L.y_tabs   = L.top + L.status_h + L.tabs_gap
     L.y_pills  = L.y_tabs + L.tabs_h + L.pills_gap
     L.y_list   = L.y_pills + L.pills_h + L.list_gap
     L.list_h   = H - KoboldNav.height() - L.list_bottom_gap - L.y_list
@@ -600,7 +601,9 @@ function KoboldMyBooks:build()
     end
 
     local body = FrameContainer:new{
-        width = L.W, bordersize = 0, padding = L.margin, padding_bottom = 0,
+        width = L.W, bordersize = 0,
+        padding_left = L.margin, padding_right = L.margin,
+        padding_top = L.top, padding_bottom = 0,
         VerticalGroup:new{
             align = "left",
             KoboldWidgets.sharedStatusBar(self),
@@ -660,9 +663,9 @@ function KoboldMyBooks:refreshList()
         self.quiet_turns = 0
         mode = "flashui"
     end
-    -- Down to the bottom edge: the page indicator sits under the nav's mini cover.
+    local dirty_y = self:isGrid() and L.y_pills or L.y_list
     UIManager:setDirty(self, function()
-        return mode, Geom:new{ x = 0, y = L.y_list, w = L.W, h = L.H - L.y_list }
+        return mode, Geom:new{ x = 0, y = dirty_y, w = L.W, h = L.H - dirty_y }
     end)
     self:ensureCovers()
 end
@@ -818,7 +821,7 @@ function KoboldMyBooks:buildPills()
             -- Back pill: left chevron and the group's name, cut to fit.
             local max_text = L.content_w - 2 * L.pill_pad - icon_size - Screen:scaleBySize(6)
             max_text = max_text - Screen:scaleBySize(40) - 3 * L.pill_gap
-            if self.tab == "collections" then   -- and room for the plus
+            if self:inCollection() then   -- and room for the plus
                 max_text = max_text - Screen:scaleBySize(26) - Screen:scaleBySize(18)
             end
             pill, w = self:buildPill(spec.label, KoboldWidgets.icon("chevron.left", icon_size), true, max_text)
@@ -852,7 +855,7 @@ function KoboldMyBooks:buildPills()
             action = function() self:exitSelect() end,
         }
     end
-    if not selecting and self.tab == "collections" and self.group then
+    if not selecting and self:inCollection() then
         -- Inside a collection the plus adds books to it (on the list of
         -- collections, the Add collection pill makes a new one).
         local plus_size = Screen:scaleBySize(26)
@@ -887,16 +890,30 @@ function KoboldMyBooks:buildPills()
         }
     end
     if #items > 0 then
-        -- The last button is kept a little in from the right edge.
-        local inset = Screen:scaleBySize(14)
-        local between = Screen:scaleBySize(18)
+        -- The last button sits close to the right edge to leave room for the page indicator.
+        local inset = Screen:scaleBySize(6)
+        local between = Screen:scaleBySize(14)
         local total = between * (#items - 1)
         for _i, it in ipairs(items) do total = total + it.width end
+        local page_txt, page_w = nil, 0
+        local page_gap = Screen:scaleBySize(10)
+        if self:isGrid() and (self.pages or 1) > 1 then
+            page_txt = TextWidget:new{
+                text = self.page .. "|" .. self.pages,
+                face = KoboldWidgets.secondaryFace(14),
+                fgcolor = KoboldWidgets.subtitleColor(),
+            }
+            page_w = page_txt:getSize().w + page_gap
+        end
         -- Width of the pills so far, from the loop above. Not row:getSize():
         -- that would fix the group's layout before the icons are added, and
         -- painting the unlaid-out icons crashes KOReader.
         local used = (#specs > 0) and (x - L.margin - L.pill_gap) or 0
-        row[#row + 1] = HorizontalSpan:new{ width = math.max(0, L.content_w - used - total - inset) }
+        row[#row + 1] = HorizontalSpan:new{ width = math.max(0, L.content_w - used - total - inset - page_w) }
+        if page_txt then
+            row[#row + 1] = page_txt
+            row[#row + 1] = HorizontalSpan:new{ width = page_gap }
+        end
         local cx = L.margin + L.content_w - inset - total
         local half = math.floor(between / 2)
         for i, it in ipairs(items) do
@@ -944,8 +961,8 @@ function KoboldMyBooks:onListHold(pos)
     elseif self.tab == "collections" and not self.group then
         self:showCollectionOptions(item, self:rowRect(pos), "side")
     elseif not self:showsGroups() and item.file then
-        if self:inCollection() then
-            -- inside a collection (it has the selection menu): the same menu as its "..."
+        if self:inCollection() or self:inUncollected() then
+            -- inside a collection or in Uncollected (they have the selection menu): the same menu as its "..."
             self:openBookMenu(item.file, self:rowRect(pos), "side", item)
         else
             -- the other tabs have no selection menu: straight to the details page
@@ -965,12 +982,20 @@ end
 -- open collection (remove from the collection). The clipboard itself is only
 -- used by Files.
 
+-- Inside a real collection. "Uncollected" is not one: it only lists the
+-- books that are in none, so it has no plus, no Select and no Remove.
 function KoboldMyBooks:inCollection()
-    return self.tab == "collections" and self.group ~= nil
+    return self.tab == "collections" and self.group ~= nil and not self.group.no_collection
+end
+
+-- "Uncollected" (the books that are in no collection) has its own selection
+-- menu: select several books and add them to collections at once.
+function KoboldMyBooks:inUncollected()
+    return self.tab == "collections" and self.group ~= nil and self.group.no_collection == true
 end
 
 function KoboldMyBooks:selecting()
-    return (self.tab == "files" or self:inCollection()) and Clipboard.isSelecting()
+    return (self.tab == "files" or self:inCollection() or self:inUncollected()) and Clipboard.isSelecting()
 end
 
 function KoboldMyBooks:toggleSelect(file)
@@ -1014,12 +1039,19 @@ function KoboldMyBooks:openMoreMenu(rect)
         return
     end
     if self.tab ~= "files" then
-        -- Books, Authors, Series, Genres and the list of collections.
-        local items = {
-            { text = _("Refresh library"), icon = { "refresh-cw", "undo" },
-              action = function() self:refreshLibrary() end },
-            { text = _("Settings"), icon = { "settings", "settings-2" }, action = settings },
-        }
+        -- Books, Authors, Series, Genres and the list of collections (and
+        -- Uncollected, which also has Select, to add several books to collections).
+        local items = {}
+        if self:inUncollected() then
+            items[#items + 1] = { text = _("Select"), icon = { "crop", "square-dot" },
+                action = function()
+                    Clipboard.enterSelect()
+                    self:refresh()
+                end }
+        end
+        items[#items + 1] = { text = _("Refresh library"), icon = { "refresh-cw", "undo" },
+              action = function() self:refreshLibrary() end }
+        items[#items + 1] = { text = _("Settings"), icon = { "settings", "settings-2" }, action = settings }
         require("kobold.ui.book_menu").show{ screen = self, anchor = rect, align = "right", items = items }
         return
     end
@@ -1113,7 +1145,7 @@ function KoboldMyBooks:buildBookRow(item)
         middle[#middle + 1] = VerticalSpan:new{ width = Screen:scaleBySize(4) }
         middle[#middle + 1] = TextWidget:new{
             text = item.authors,
-            face = KoboldWidgets.face(14),
+            face = KoboldWidgets.secondaryFace(14),
             fgcolor = KoboldWidgets.subtitleColor(),
             max_width = L.text_w,
         }
@@ -1130,7 +1162,7 @@ function KoboldMyBooks:buildBookRow(item)
         right[#right + 1] = VerticalSpan:new{ width = Screen:scaleBySize(2) }
         right[#right + 1] = TextWidget:new{
             text = format,
-            face = KoboldWidgets.face(13),
+            face = KoboldWidgets.secondaryFace(13),
             fgcolor = KoboldWidgets.subtitleColor(),
             max_width = L.right_w,
         }
@@ -1231,10 +1263,10 @@ function KoboldMyBooks:buildSeriesRow(group)
     }
     if authors then
         top[#top + 1] = VerticalSpan:new{ width = Screen:scaleBySize(4) }
-        top[#top + 1] = TextWidget:new{ text = authors, face = KoboldWidgets.face(14), max_width = text_w }
+        top[#top + 1] = TextWidget:new{ text = authors, face = KoboldWidgets.secondaryFace(14), max_width = text_w }
     end
     local count = TextWidget:new{
-        text = countText(#group.books), face = KoboldWidgets.face(14), max_width = text_w,
+        text = countText(#group.books), face = KoboldWidgets.secondaryFace(14), max_width = text_w,
     }
     local pad = L.row_pad
     local fill = math.max(0, row_h - 2 * pad - top:getSize().h - count:getSize().h)
@@ -1286,7 +1318,7 @@ function KoboldMyBooks:buildList()
             dimen = Geom:new{ w = L.list_w, h = L.list_h },
             TextWidget:new{
                 text = self:emptyText(),
-                face = KoboldWidgets.face(16),
+                face = KoboldWidgets.secondaryFace(16),
                 fgcolor = KoboldWidgets.subtitleColor(),
                 max_width = L.list_w,
             },
@@ -1351,47 +1383,7 @@ local function moreHit(rect)
     return { x = rect.x + rect.w - z, y = rect.y + rect.h - z, w = z, h = z }
 end
 
--- An svg icon in white with a black outline. The svg is drawn once, in black,
--- onto a white scratch buffer, and the dark pixels are kept as a mask; each
--- paint then fills that mask in black, grown by the outline, and again in
--- white. (A white tint of the svg itself does not come out white.)
-local OutlinedIcon = Widget:extend{ name = nil, size = 0 }
-
-function OutlinedIcon:init()
-    local img = OptionSheet.iconWidget(self.name, self.size, Blitbuffer.COLOR_BLACK)
-    local mask = Blitbuffer.new(self.size, self.size, Blitbuffer.TYPE_BB8)
-    mask:fill(Blitbuffer.COLOR_WHITE)
-    pcall(function() img:paintTo(mask, 0, 0) end)
-    self.pts = {}
-    for yy = 0, self.size - 1 do
-        for xx = 0, self.size - 1 do
-            local px = mask:getPixel(xx, yy)
-            if px and px:getColor8().a < 140 then
-                self.pts[#self.pts + 1] = xx
-                self.pts[#self.pts + 1] = yy
-            end
-        end
-    end
-    mask:free()
-    if img.free then img:free() end
-end
-
-function OutlinedIcon:getSize() return Geom:new{ w = self.size, h = self.size } end
-
-function OutlinedIcon:paintTo(bb, x, y)
-    self.dimen = Geom:new{ x = x, y = y, w = self.size, h = self.size }
-    local o = math.max(1, Screen:scaleBySize(1))
-    local d = 2 * o + 1
-    local pts = self.pts
-    for i = 1, #pts, 2 do
-        bb:paintRect(x + pts[i] - o, y + pts[i + 1] - o, d, d, Blitbuffer.COLOR_BLACK)
-    end
-    for i = 1, #pts, 2 do
-        bb:paintRect(x + pts[i], y + pts[i + 1], 1, 1, Blitbuffer.COLOR_WHITE)
-    end
-end
-
-function OutlinedIcon:free() end
+local OutlinedIcon = require("kobold.ui.outlined_icon")  -- shared with Home (library_shelf.lua)
 
 -- The square of selection mode, in the place of the "..." on a cover: empty,
 -- or ticked (square-dot) when the book is selected. Same outline as the "...".
@@ -1474,7 +1466,7 @@ function KoboldMyBooks:buildGrid()
         return CenterContainer:new{
             dimen = Geom:new{ w = L.content_w, h = L.grid_h },
             TextWidget:new{
-                text = self:emptyText(), face = KoboldWidgets.face(16),
+                text = self:emptyText(), face = KoboldWidgets.secondaryFace(16),
                 fgcolor = KoboldWidgets.subtitleColor(), max_width = L.content_w,
             },
         }
@@ -1546,7 +1538,7 @@ function KoboldMyBooks:buildGrid()
                         VerticalSpan:new{ width = L.grid_text_gap },
                         TextWidget:new{ text = item.name, face = KoboldWidgets.face(14), max_width = L.grid_cell_w },
                         TextWidget:new{
-                            text = countText(#item.books), face = KoboldWidgets.face(13),
+                            text = countText(#item.books), face = KoboldWidgets.secondaryFace(13),
                             fgcolor = KoboldWidgets.subtitleColor(), max_width = L.grid_cell_w,
                         },
                     }
@@ -1681,7 +1673,7 @@ function KoboldMyBooks:onGridHold(pos)
         end
         return
     end
-    if self.tab == "files" or self:inCollection() then
+    if self.tab == "files" or self:inCollection() or self:inUncollected() then
         self:openGridMenu(item, col, cell_x, cell_y)
     else
         self:openBookDetails(item.file)
@@ -1768,7 +1760,7 @@ function KoboldMyBooks:buildFolderRow(item)
                 VerticalSpan:new{ width = Screen:scaleBySize(4) },
                 TextWidget:new{
                     text = itemsText(count),
-                    face = KoboldWidgets.face(14),
+                    face = KoboldWidgets.secondaryFace(14),
                     fgcolor = KoboldWidgets.subtitleColor(),
                     max_width = text_w,
                 },
@@ -1903,12 +1895,16 @@ end
 -- `item` (optional) is the list item of the book; inside a collection it adds
 -- "Remove from collection" (it asks first, see confirmRemoveFromCollection).
 function KoboldMyBooks:openBookMenu(file, anchor, align, item)
-    local on_remove, on_select
-    if item and self.tab == "collections" and self.group then
+    local on_remove, on_select, on_add_to_collection
+    if item and self:inCollection() then
         on_remove = function() self:confirmRemoveFromCollection(item) end
     end
+    -- Uncollected: add this book to collections without going through Select.
+    if item and self:inUncollected() and not item.is_dir then
+        on_add_to_collection = function() self:addSelectedToCollections({ file }) end
+    end
     -- Select: on Files (while the clipboard is empty) and inside a collection.
-    local can_select = (self.tab == "files" and not Clipboard.hasBoard()) or self:inCollection()
+    local can_select = (self.tab == "files" and not Clipboard.hasBoard()) or self:inCollection() or self:inUncollected()
     if item and can_select and not item.is_dir and not self:selecting() then
         on_select = function()
             Clipboard.enterSelect()
@@ -1920,6 +1916,7 @@ function KoboldMyBooks:openBookMenu(file, anchor, align, item)
         file = file, screen = self, anchor = anchor,
         on_remove = on_remove,
         on_select = on_select,
+        on_add_to_collection = on_add_to_collection,
         align = align ~= "side" and align or nil, side = align == "side",
         koreader = true,   -- the Library tab is where a book gets edited
         on_change = function() self:scheduleReload() end,
@@ -2028,6 +2025,28 @@ function KoboldMyBooks:onCloseWidget()
         self.unhook()
         self.unhook = nil
     end
+end
+
+-- The Back key (or gesture): one step back, not out of KiKome. In order:
+-- leave the selection mode; leave the author / series / collection / genre
+-- being shown (back to the list); go up one folder in Files (never above the
+-- home folder); from the top of a tab go to Home. Home is where Back leaves
+-- KiKome (see home.lua).
+function KoboldMyBooks:onBack()
+    if Clipboard.isSelecting() then
+        self:exitSelect()
+        return true
+    end
+    if self.group then
+        self:closeGroup()
+        return true
+    end
+    if self.tab == "files" and self:currentFolder() ~= self:filesRoot() then
+        self:openFolder(self:parentFolder())
+        return true
+    end
+    if require("kobold.ui.router").show("home", self) then return true end
+    return self:onClose()
 end
 
 function KoboldMyBooks:onClose()

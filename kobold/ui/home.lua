@@ -20,6 +20,8 @@ local lfs             = require("libs/libkoreader-lfs")
 local KoboldLibrary   = require("kobold.data.library")
 local KoboldCovers    = require("kobold.data.covers")
 local KoboldHomeData  = require("kobold.data.home")
+local KoboldFonts     = require("kobold.data.fonts")
+local KoboldPrefs     = require("kobold.data.prefs")
 local Rounded        = require("kobold.ui.rounded")
 local CoverBadge     = require("kobold.ui.cover_badge")
 local Chips          = require("kobold.data.chips")
@@ -32,6 +34,7 @@ local LibraryShelf    = require("kobold.ui.library_shelf")
 
 local Screen = Device.screen
 local COVER_RATIO = 1.5
+local RECENT_ACROSS = 4.5   -- covers across the row of recent books
 
 local KoboldHome = InputContainer:extend{
     covers_fullscreen = true,
@@ -96,7 +99,7 @@ function KoboldHome:init()
         }
     end
     if Device:hasKeys() then
-        self.key_events = { Close = { { Device.input.group.Back } } }
+        self.key_events = { Back = { { Device.input.group.Back } } }
     end
     self:loadData()
     self:build()
@@ -175,6 +178,27 @@ function KoboldHome:paintTo(bb, x, y)
     if self.chips_sig ~= nil and Chips.signature() ~= self.chips_sig then
         self:build()
     end
+    -- A font was changed in Settings > Fonts.
+    if self.font_sig ~= nil and KoboldFonts.signature() ~= self.font_sig then
+        self:build()
+    end
+    -- Settings > Home > Top of Home: the recent books row, the current book card or the clock.
+    if self.top_pref ~= nil and KoboldPrefs.get("home_top") ~= self.top_pref then
+        self:build()
+    end
+    -- The Clock card: the font changed in Settings, the minute turned while Home was
+    -- covered (a book, a menu), or the tick was lost: catch up.
+    if self.clock_holder then
+        if self.clock_sig ~= self:clockSig() then
+            self:build()
+        elseif self.clock_minute ~= math.floor(os.time() / 60) then
+            self:refreshClockCard()
+        end
+        if self.clock_holder and not self.clock_tick then self:scheduleClock() end
+    end
+    -- The time in the status bar: whatever makes Home repaint (a swipe, a tap, coming
+    -- back from a book) also brings it up to date. Nothing is refreshed for it alone.
+    self:refreshStatusClock()
     InputContainer.paintTo(self, bb, x, y)
 end
 
@@ -198,15 +222,15 @@ function KoboldHome:build()
     -- Settings, so the status bar does not move between them.
     local bar       = KoboldMetrics.statusBar()
     local margin    = bar.margin
-    local gap       = Screen:scaleBySize(20)
+    local gap       = Screen:scaleBySize(16)
     local content_w = W - 2 * margin
 
     -- On a short screen the grid shrinks instead (see fitScale in
     -- library_shelf.lua).
     local margin_top    = bar.top                  -- screen edge to the status bar
     local status_h      = bar.h
-    local status_gap    = Screen:scaleBySize(16)   -- status bar to the recent row
-    local shelf_gap     = Screen:scaleBySize(16)   -- recent row to the shelf
+    local status_gap    = Screen:scaleBySize(8)    -- status bar to the recent row
+    local shelf_gap     = Screen:scaleBySize(10)   -- recent row to the shelf
     local tight_gap     = Screen:scaleBySize(4)    -- cover to its title
     -- One line under each cover, the book's title: as tall as the text itself,
     -- at any screen density. (The percentage read is the badge on the cover.)
@@ -214,13 +238,12 @@ function KoboldHome:build()
     local caption_h     = line_h + Screen:scaleBySize(2)
     local nav_h         = KoboldNav.height()
 
-    -- The recent row is a little smaller: 3.7 covers across, not 3.4. On a
-    -- short screen (landscape) that would make the covers taller than the
-    -- screen, so the row takes at most about a third of the height under the
-    -- status bar, and more covers show across instead.
-    local room_h = H - nav_h - (margin_top + status_h + status_gap) - Screen:scaleBySize(10)
-    local top_w = math.floor((content_w - 3 * gap) / 3.7)
-    local max_top_h = math.floor(room_h * 0.36) - tight_gap - caption_h
+    -- The recent row is smaller than the shelf's covers so it takes less height.
+    -- On a short screen (landscape) it takes at most ~33% of the height under
+    -- the status bar so both the Current book card and the shelves fit cleanly.
+    local room_h = H - nav_h - (margin_top + status_h + status_gap) - Screen:scaleBySize(8)
+    local top_w = math.floor((content_w - 3 * gap) / RECENT_ACROSS)
+    local max_top_h = math.floor(room_h * 0.33) - tight_gap - caption_h
     top_w = math.min(top_w, math.floor(max_top_h / COVER_RATIO))
     top_w = math.max(top_w, Screen:scaleBySize(60))
     local top_h = math.floor(top_w * COVER_RATIO)
@@ -238,9 +261,16 @@ function KoboldHome:build()
     local read_offset  = math.min((self.reading_page - 1) * page_step, max_offset)
     local read_h       = top_h + tight_gap + caption_h
 
+    -- All Top of Home modes share the exact same height (`read_h`) so the
+    -- shelves below never shift when switching modes.
+    local current = data.reading and data.reading[1]
+    local top_mode = KoboldPrefs.get("home_top")
+    local clock_mode = top_mode == "clock"
+    local card_mode = top_mode == "current" and current and current.file
+
     local y_read  = margin_top + status_h + status_gap
     local y_lib   = y_read + read_h + shelf_gap
-    local shelf_h = H - nav_h - y_lib - Screen:scaleBySize(10)
+    local shelf_h = H - nav_h - y_lib - Screen:scaleBySize(8)
 
     -- Keep the open tab, page and series / author across rebuilds.
     local prev_state = self.library_shelf and self.library_shelf:getState()
@@ -258,6 +288,7 @@ function KoboldHome:build()
             end)
         end,
     }
+    self.top_rect   = Geom:new{ x = margin, y = y_read, w = content_w, h = read_h }
     self.shelf_rect = Geom:new{ x = margin, y = y_lib, w = content_w, h = shelf_h }
 
     local L = {
@@ -268,8 +299,28 @@ function KoboldHome:build()
     }
 
     self.corners_on = Rounded.enabled()
+    self.status_minute = math.floor(os.time() / 60)
     self.outline_w = KoboldWidgets.outlineWidth()
     self.chips_sig = Chips.signature()
+    self.font_sig = KoboldFonts.signature()
+
+    -- The top: the row of recent books, or (Settings > Home > Top of Home) one
+    -- card with the book being read, or the clock. With no book read yet, the row stays.
+    self.top_pref = top_mode
+    self.card_hits, self.card_file = nil, nil
+    -- Whatever the clock card had (and its minute tick) goes: it is made again below if it is on.
+    self:cancelClock()
+    self.clock_holder, self.clock_args, self.clock_sig, self.clock_hits = nil, nil, nil, nil
+    local top_widget
+    if clock_mode then
+        L.x, L.y = margin, y_read
+        top_widget = self:buildClockCard(current, L)
+    elseif card_mode then
+        L.x, L.y = margin, y_read
+        top_widget = self:buildCurrentCard(current, L)
+    else
+        top_widget = self:buildReadingSection(data.reading, L)
+    end
 
     local body = FrameContainer:new{
         width = W, bordersize = 0, padding = margin, padding_top = margin_top, padding_bottom = 0,
@@ -277,7 +328,7 @@ function KoboldHome:build()
             align = "left",
             KoboldWidgets.sharedStatusBar(self),
             VerticalSpan:new{ width = status_gap },
-            self:buildReadingSection(data.reading, L),
+            top_widget,
             VerticalSpan:new{ width = shelf_gap },
             self.library_shelf,
         },
@@ -285,27 +336,81 @@ function KoboldHome:build()
 
     KoboldTaps.topMenu(self)
 
-    self.reading_rect = Geom:new{ x = margin, y = y_read, w = content_w, h = read_h }
-    local function coverAt(ges)
-        local rel = ges.pos.x - margin + read_offset
-        local i = math.floor(rel / step) + 1
-        local inside = rel - (i - 1) * step
-        local item = data.reading and data.reading[i]
-        if item and item.file and inside <= top_w then
-            return item, margin + (i - 1) * step - read_offset
+    if clock_mode then
+        -- Only the controls row responds to touch (play pill, annotations, edit);
+        -- the quote box itself does nothing.
+        self.reading_rect = nil
+        local function openClockDetails(start_view)
+            if not self.clock_file then return end
+            require("kobold.ui.book_details").show(self.clock_file, self, function()
+                if self.onKoboldReturn then self:onKoboldReturn() end
+            end, nil, start_view)
         end
-    end
-    KoboldTaps.add(self, "KoboldTopRow", margin, y_read, content_w, top_h, function(ges)
-        local item = coverAt(ges)
-        if item then KoboldReader.tapOpen(self, item.file) end
-    end)
-    KoboldTaps.hold(self, "KoboldTopRowHold", margin, y_read, content_w, top_h, function(ges)
-        local item = coverAt(ges)
-        if not item then return end
-        require("kobold.ui.book_details").show(item.file, self, function()
-            if self.onKoboldReturn then self:onKoboldReturn() end
+        KoboldTaps.add(self, "KoboldTopRow", margin, y_read, content_w, read_h, function(ges)
+            local h, pos = self.clock_hits, ges.pos
+            if not (h and self.clock_file) then return end
+            if pos:intersectWith(h.annot) then
+                openClockDetails("annotations")
+            elseif pos:intersectWith(h.edit) then
+                openClockDetails("edit")
+            elseif pos:intersectWith(h.read) then
+                KoboldReader.tapOpen(self, self.clock_file)
+            end
         end)
-    end)
+        KoboldTaps.hold(self, "KoboldTopRowHold", margin, y_read, content_w, read_h, function(ges)
+            local h, pos = self.clock_hits, ges.pos
+            if not (h and self.clock_file) then return end
+            if pos:intersectWith(h.read) or pos:intersectWith(h.annot) or pos:intersectWith(h.edit) then
+                openClockDetails()
+            end
+        end)
+    elseif card_mode then
+        -- One zone for the whole card (the same ids as the row, which they replace).
+        self.reading_rect = nil
+        local function openDetails(start_view)
+            require("kobold.ui.book_details").show(self.card_file, self, function()
+                if self.onKoboldReturn then self:onKoboldReturn() end
+            end, nil, start_view)
+        end
+        KoboldTaps.add(self, "KoboldTopRow", margin, y_read, content_w, read_h, function(ges)
+            local h, pos = self.card_hits, ges.pos
+            if not (h and self.card_file) then return end
+            if pos:intersectWith(h.annot) then
+                openDetails("annotations")
+            elseif pos:intersectWith(h.edit) then
+                openDetails("edit")
+            elseif pos:intersectWith(h.read) or pos:intersectWith(h.cover) then
+                KoboldReader.tapOpen(self, self.card_file)
+            else
+                openDetails()
+            end
+        end)
+        KoboldTaps.hold(self, "KoboldTopRowHold", margin, y_read, content_w, read_h, function()
+            if self.card_file then openDetails() end
+        end)
+    else
+        self.reading_rect = Geom:new{ x = margin, y = y_read, w = content_w, h = read_h }
+        local function coverAt(ges)
+            local rel = ges.pos.x - margin + read_offset
+            local i = math.floor(rel / step) + 1
+            local inside = rel - (i - 1) * step
+            local item = data.reading and data.reading[i]
+            if item and item.file and inside <= top_w then
+                return item, margin + (i - 1) * step - read_offset
+            end
+        end
+        KoboldTaps.add(self, "KoboldTopRow", margin, y_read, content_w, top_h, function(ges)
+            local item = coverAt(ges)
+            if item then KoboldReader.tapOpen(self, item.file) end
+        end)
+        KoboldTaps.hold(self, "KoboldTopRowHold", margin, y_read, content_w, top_h, function(ges)
+            local item = coverAt(ges)
+            if not item then return end
+            require("kobold.ui.book_details").show(item.file, self, function()
+                if self.onKoboldReturn then self:onKoboldReturn() end
+            end)
+        end)
+    end
 
     self[1] = FrameContainer:new{
         width = W, height = H, bordersize = 0, padding = 0,
@@ -313,7 +418,9 @@ function KoboldHome:build()
         OverlapGroup:new{
             dimen = Geom:new{ w = W, h = H },
             body,
-            KoboldNav.attach(self, W, H, "home"),
+            -- With the current book card on show, the mini cover of the last book
+            -- would be the same book twice: it is left out.
+            KoboldNav.attach(self, W, H, "home", { no_cover = card_mode and true or false }),
         },
     }
 end
@@ -338,6 +445,167 @@ local function readState(item)
     if info.status == "complete" or (pct and pct >= 1) then return 1, true end
     if pct and pct > 0 then return pct, false end
     return nil, false
+end
+
+-- The current book card (home_current.lua) for `item`, the most recent book.
+-- L.x, L.y, L.content_w and L.read_h say where it goes and how big it is.
+-- Remembers the book and the rects of its cover and pills for the taps.
+function KoboldHome:buildCurrentCard(item, L)
+    local pct, done, onhold = readState(item)
+    local ok, info = pcall(KoboldLibrary.getDocInfoCached, item.file)
+    info = (ok and type(info) == "table") and info or {}
+    local ok_m, meta = pcall(LibraryShelf.bookMeta, item.file)
+    meta = (ok_m and type(meta) == "table") and meta or {}
+    -- Minutes left in the chapter: what the reader kept in the sidecar when it
+    -- last saved the book, at this reading speed. nil when anything is missing.
+    local minutes, left_text
+    pcall(function()
+        local snap = info.chapter_left
+        if type(snap) ~= "table" then return end
+        -- the reader's own figure (snap.seconds) needs nothing else; without it,
+        -- the book's reading speed from the statistics database
+        local rate
+        if not snap.seconds and info.md5 then
+            rate = require("kobold.data.stats").secondsPerPage({ info.md5 })[info.md5]
+        end
+        local ChapterLeft = require("kobold.data.chapter_left")
+        minutes = ChapterLeft.minutes(snap, pct, info.pages, rate)
+        -- the time as the reader wrote it, when it could not be read as minutes
+        if not minutes then left_text = ChapterLeft.text(snap, pct) end
+    end)
+    -- The pages of "Page X of Y": the same count as Book details (the Metadata count or KOReader's
+    -- stable pages, when the book has them); otherwise the layout's, as before. The minutes left
+    -- above keep the layout's pages: the reading speed is measured per page of the layout.
+    local card_pages = tonumber(info.pages) or tonumber(item.pages)
+    local ok_p, shown = pcall(function() return require("kobold.data.stable_pages").shown(item.file) end)
+    if ok_p and tonumber(shown) then card_pages = tonumber(shown) end
+    local card, hits = require("kobold.ui.home_current").build{
+        file = item.file, x = L.x, y = L.y, w = L.content_w, h = L.read_h,
+        title = (not meta.pending and meta.title) or self:titleOf(item),
+        authors = meta.authors, series = meta.series, series_index = meta.series_index,
+        pct = pct, done = done, onhold = onhold,
+        pages = card_pages, minutes_left = minutes, left_text = left_text,
+    }
+    self.card_file, self.card_hits = item.file, hits
+    return card
+end
+
+-- The Clock card (home_clock.lua) at the top of Home. It remembers what it
+-- needs to be drawn again each minute (clock_args) and sits in a holder whose
+-- only child is swapped, so a new minute does not build the whole of Home.
+-- `item` is the book being read: the pill on top says its title and opens it.
+function KoboldHome:buildClockCard(item, L)
+    local file, book_title
+    if item and item.file then
+        file = item.file
+        local ok_m, meta = pcall(LibraryShelf.bookMeta, file)
+        meta = (ok_m and type(meta) == "table") and meta or {}
+        book_title = (not meta.pending and meta.title) or self:titleOf(item)
+    end
+    self.clock_file = file
+    self.clock_args = { x = L.x, y = L.y, w = L.content_w, h = L.read_h, file = file, book_title = book_title }
+    local args = { w = L.content_w, h = L.read_h, now = os.time(), file = file, book_title = book_title }
+    local card, rel_hits = require("kobold.ui.home_clock").build(args)
+    self:setClockHits(rel_hits)
+    self.clock_holder = KoboldWidgets.fixed(L.content_w, L.read_h, card)
+    self.clock_minute = math.floor(args.now / 60)
+    self.clock_sig = self:clockSig()
+    self:scheduleClock()
+    return self.clock_holder
+end
+
+-- Translates the controls' card-relative rects into screen coordinates for taps.
+function KoboldHome:setClockHits(rel_hits)
+    local a = self.clock_args
+    if not (a and rel_hits) then self.clock_hits = nil; return end
+    local function shift(r)
+        return Geom:new{ x = a.x + r.x, y = a.y + r.y, w = r.w, h = r.h }
+    end
+    self.clock_hits = {
+        read  = shift(rel_hits.read),
+        annot = shift(rel_hits.annot),
+        edit  = shift(rel_hits.edit),
+    }
+end
+
+-- What the card depends on besides the minute, to notice a change in Settings.
+function KoboldHome:clockSig()
+    return KoboldFonts.signature()
+end
+
+-- Draws the card again for the current minute, in place. False when it cannot.
+-- The time of the status bar is brought up to date with it.
+function KoboldHome:refreshClockCard()
+    if not (self.clock_holder and self.clock_args) then return false end
+    local a = self.clock_args
+    local now = os.time()
+    local ok, card, rel_hits = pcall(require("kobold.ui.home_clock").build,
+        { w = a.w, h = a.h, now = now, file = a.file, book_title = a.book_title })
+    if not ok or not card then return false end
+    local old = self.clock_holder[1]
+    self.clock_holder[1] = card
+    if old and old.free then pcall(old.free, old) end
+    self:setClockHits(rel_hits)
+    self.clock_minute = math.floor(now / 60)
+    self:refreshStatusClock()
+    return true
+end
+
+-- Puts the status bar's time right for the current minute, without asking for a
+-- refresh: the caller is painting, or is already refreshing the screen around it.
+function KoboldHome:refreshStatusClock()
+    local minute = math.floor(os.time() / 60)
+    if self.status_minute == minute then return end
+    self.status_minute = minute
+    local s = self._kobold_status
+    if s and s.frame then
+        local ok, bar = pcall(KoboldWidgets.statusBar, s.dimen.w)
+        if ok and bar then s.frame[1] = bar end
+    end
+end
+
+local function inWindowStack(widget)
+    for _i, entry in ipairs(UIManager._window_stack or {}) do
+        if entry.widget == widget then return true end
+    end
+    return false
+end
+
+-- The card changes at the start of each minute, only while Home is what the
+-- reader sees (a book, a menu or the screensaver on top keep it from
+-- refreshing the e-ink for nothing; paintTo catches up when Home comes back).
+function KoboldHome:scheduleClock()
+    self:cancelClock()
+    if not self.clock_holder then return end
+    local delay = 60 - (os.time() % 60) + 1
+    self.clock_tick = function() self:onClockTick() end
+    UIManager:scheduleIn(delay, self.clock_tick)
+end
+
+function KoboldHome:cancelClock()
+    if self.clock_tick then
+        UIManager:unschedule(self.clock_tick)
+        self.clock_tick = nil
+    end
+end
+
+function KoboldHome:onClockTick()
+    self.clock_tick = nil
+    if not self.clock_holder or not inWindowStack(self) then return end
+    local stack = UIManager._window_stack
+    local top = stack and stack[#stack] and stack[#stack].widget
+    if top == self and not Device.screen_saver_mode and self:refreshClockCard() then
+        -- The card changes, so the status bar's time goes with it in the same refresh:
+        -- one region from the top of the bar down to the bottom of the card.
+        local c, s = self.clock_args, self._kobold_status
+        UIManager:setDirty(self, function()
+            local y0 = s and s.dimen and math.min(s.dimen.y, c.y) or c.y
+            local x0 = s and s.dimen and math.min(s.dimen.x, c.x) or c.x
+            local x1 = s and s.dimen and math.max(s.dimen.x + s.dimen.w, c.x + c.w) or (c.x + c.w)
+            return "ui", Geom:new{ x = x0, y = y0, w = x1 - x0, h = c.y + c.h - y0 }
+        end)
+    end
+    self:scheduleClock()
 end
 
 function KoboldHome:buildReadingSection(reading, L)
@@ -395,18 +663,20 @@ function KoboldHome:buildReadingSection(reading, L)
 end
 
 function KoboldHome:onSwipeCovers(_, ges)
-    if not self.reading_rect then return false end
-    if ges.pos:intersectWith(self.reading_rect) then
+    if self.reading_rect and ges.pos:intersectWith(self.reading_rect) then
         local total = self.reading_pages or 1
         if ges.direction == "west" and self.reading_page < total then
             self.reading_page = self.reading_page + 1
+            self:build()
+            UIManager:setDirty(self, "ui")
         elseif ges.direction == "east" and self.reading_page > 1 then
             self.reading_page = self.reading_page - 1
-        else
-            return false
+            self:build()
+            UIManager:setDirty(self, "ui")
         end
-        self:build()
-        UIManager:setDirty(self, "ui")
+        return true
+    end
+    if self.top_rect and ges.pos:intersectWith(self.top_rect) then
         return true
     end
     return false
@@ -431,7 +701,34 @@ function KoboldHome:onSwipeShelf(_, ges)
     return true
 end
 
+-- The Back key (or gesture): one step back, not out of KiKome. In selection
+-- mode it leaves that mode. Inside a
+-- series, author, collection or folder of the shelf it goes up one level; from
+-- the top of Home it leaves KiKome.
+function KoboldHome:onBack()
+    local shelf = self.library_shelf
+    -- In selection mode Back only leaves selection mode.
+    if shelf and shelf.selecting and shelf:selecting() then
+        shelf:exitSelect()
+        return true
+    end
+    if shelf and shelf.canGoBack and shelf:canGoBack() then
+        shelf:goBack()
+        return true
+    end
+    -- Back from the top of Home would leave KiKome for KOReader: ask first.
+    local _ = require("kobold.i18n")
+    require("kobold.ui.confirm_sheet").show{
+        title = _("Leave KiKome?"),
+        message = _("You will go back to KOReader."),
+        confirm_text = _("Leave"),
+        on_confirm = function() self:onClose() end,
+    }
+    return true
+end
+
 function KoboldHome:onClose()
+    self:cancelClock()
     require("kobold.ui.park").closeScreen(self)
     return true
 end

@@ -126,7 +126,7 @@ function KoboldWifi:build()
             end
             y = y + row_h
 
-            -- Link to KOReader's list of networks, in italics.
+            -- Link to KOReader's list of networks.
             content[#content + 1] = line()
             y = y + line_h
             content[#content + 1] = row(HorizontalGroup:new{
@@ -134,7 +134,7 @@ function KoboldWifi:build()
                 KoboldWidgets.customIcon("wifi-cog", icon_size, "appbar.settings"),
                 HorizontalSpan:new{ width = gap },
                 TextWidget:new{
-                    text = _("Wi-Fi Settings"), face = KoboldWidgets.italicFace(16), max_width = inner - icon_size - gap,
+                    text = _("Wi-Fi Settings"), face = KoboldWidgets.face(16), max_width = inner - icon_size - gap,
                 },
             })
             self.rows.settings = Geom:new{ x = x0, y = y, w = inner, h = row_h }

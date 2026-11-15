@@ -299,7 +299,7 @@ function FileSelector:build()
         TextWidget:new{
             text = n > 0 and string.format(_("%s selected"), FileActions.countText(n))
                 or _("Tap a book to select it"),
-            face = KoboldWidgets.face(14), fgcolor = KoboldWidgets.subtitleColor(),
+            face = KoboldWidgets.secondaryFace(14), fgcolor = KoboldWidgets.subtitleColor(),
             max_width = content_w,
         },
     })
@@ -340,7 +340,7 @@ function FileSelector:build()
         rows[#rows + 1] = CenterContainer:new{
             dimen = Geom:new{ w = row_w, h = list_h },
             TextWidget:new{
-                text = _("This folder is empty."), face = KoboldWidgets.face(15),
+                text = _("This folder is empty."), face = KoboldWidgets.secondaryFace(15),
                 fgcolor = KoboldWidgets.subtitleColor(), max_width = row_w,
             },
         }

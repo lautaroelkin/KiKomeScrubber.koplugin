@@ -28,8 +28,9 @@
 --     --          on_pick = function() end       tap runs on_pick and goes back one level
 --   }
 -- Pages: "root" (the main screen), "general" (opening panel, corners, outline,
--- shelves and the status bar), "advanced" and one choice page per setting
--- (battery, stable_pages, clock_layout, clock_date_format, clock_pattern, library_list_rows, library_grid_rows), "library", "library_tabs"
+-- shelves and the status bar), "fonts" (the primary and the secondary font), "advanced" and one choice page per setting
+-- (home_top, battery, stable_pages, clock_layout, clock_date_format, clock_pattern, library_list_rows, library_grid_rows,
+-- font_primary, font_secondary), "library", "library_tabs"
 -- (the Library's tabs: order and on / off) and "library_tab:collections".
 -- Everything stays inside this window; no KOReader menus.
 
@@ -58,6 +59,7 @@ local _               = require("kobold.i18n")
 local KoboldChips     = require("kobold.data.chips")
 local KoboldClock     = require("kobold.data.clock")
 local KoboldCovers    = require("kobold.data.covers")
+local KoboldFonts     = require("kobold.data.fonts")
 local KoboldLibrary   = require("kobold.data.library")
 local KoboldMeta      = require("kobold.meta")
 local KoboldPrefs     = require("kobold.data.prefs")
@@ -245,32 +247,16 @@ function KoboldSettings:editClockPattern()
     }
 end
 
--- The clock rows of Settings > General > Status bar: as few as possible. The
--- layout is always there; the date format only while the layout shows a date;
--- the custom pattern only while the custom layout is chosen.
+-- The clock row of Settings > General > Status bar. The date format and the
+-- custom pattern are inside the Clock page (see "clock_layout").
 function KoboldSettings:clockItems()
-    local items = {
+    return {
         {
             text = _("Clock"), icon = "clock.svg", kind = "submenu", target = "clock_layout",
             value = KoboldClock.preview(),
             desc = _("What the status bar shows where the time is: the time alone, or with the weekday and the date. Tap the clock in the status bar to see the full date. The 12 / 24-hour format is KOReader's."),
         },
     }
-    if KoboldClock.hasDate() then
-        items[#items + 1] = {
-            text = _("Date format"), icon = "notepad-text.svg", kind = "submenu", target = "clock_date_format",
-            value = KoboldClock.formatWords(KoboldClock.formatId()),
-            desc = _("Day first or month first, with the year or without it."),
-        }
-    end
-    if KoboldClock.layout() == "custom" then
-        items[#items + 1] = {
-            text = _("Custom pattern"), icon = "pencil.svg", kind = "submenu", target = "clock_pattern",
-            value = KoboldClock.customPattern(),
-            desc = _("Write what the clock shows, or go back to the default pattern."),
-        }
-    end
-    return items
 end
 
 -- Pages are built fresh on every redraw, so values are always current.
@@ -284,7 +270,13 @@ function KoboldSettings:getPageDefinition(page_id)
             items = {
                 {
                     text = _("General"), icon = { "settings.svg", "settings-2.svg" }, kind = "submenu", target = "general",
-                    desc = _("Opening pill, rounded corners, cover outline and the status bar."),
+                    desc = _("Opening pill, rounded corners, cover outline, fonts and the status bar."),
+                },
+                { section = _("Home") },
+                {
+                    text = _("Top of Home"), icon = "house.svg", kind = "submenu", target = "home_top",
+                    value = ({ current = _("Current book"), clock = _("Literary clock (only English)") })[KoboldPrefs.get("home_top")] or _("Recent books"),
+                    desc = _("What Home shows above the shelves: the row of recent books, one card with the book you are reading, or a line from a book."),
                 },
                 {
                     text = _("Shelves"), icon = "square-library.svg", kind = "submenu", target = "shelves",
@@ -337,6 +329,10 @@ function KoboldSettings:getPageDefinition(page_id)
                     setting = "cover_outline", default = true,
                     desc = _("A thin grey line around every cover, on Home and in the library, in grid and list. Off: covers with no outline."),
                 },
+                {
+                    text = _("Fonts"), icon = { "type.svg", "pencil.svg" }, kind = "submenu", target = "fonts",
+                    desc = _("A primary font for most of the text and a secondary one for the details. By default both are KOReader's font."),
+                },
                 { section = _("Books") },
                 {
                     text = _("Stable pages"), icon = "book-open-text.svg", kind = "submenu", target = "stable_pages",
@@ -351,7 +347,7 @@ function KoboldSettings:getPageDefinition(page_id)
                 },
             },
         }
-        -- The clock rows come last: the Status bar section is the end of the page.
+        -- The clock comes last: the Status bar section is the end of the page.
         for _i, item in ipairs(self:clockItems()) do page.items[#page.items + 1] = item end
         return page
     end
@@ -400,8 +396,8 @@ function KoboldSettings:getPageDefinition(page_id)
         return { title = _("Tabs"), items = items }
     end
 
-    -- The Collections tab of the Library: whether Favorites and To be read are
-    -- listed in it. (Home has its own switches, in Shelves.)
+    -- The Collections tab of the Library: whether Favorites, To be read and
+    -- "Uncollected" (the books in no collection) are listed in it. (Home has its own switches, in Shelves.)
     if page_id == "library_tab:collections" then
         return {
             title = _("Collections"),
@@ -418,6 +414,12 @@ function KoboldSettings:getPageDefinition(page_id)
                     get = function() return KoboldChips.libraryCollectionShown("favorites") end,
                     set = function(on) KoboldChips.setLibraryCollectionShown("favorites", on) end,
                     desc = _("List the Favorites collection in the Library's Collections. Off: it is hidden there. Home has its own switch in Shelves."),
+                },
+                {
+                    text = _("Uncollected"), icon = "square-library.svg", kind = "toggle",
+                    get = function() return KoboldChips.libraryCollectionShown(KoboldChips.NO_COLLECTION) end,
+                    set = function(on) KoboldChips.setLibraryCollectionShown(KoboldChips.NO_COLLECTION, on) end,
+                    desc = _("A list in the Library's Collections with the books that are in no collection. A book leaves it when you add it to one. Off: the list is hidden there. Home has its own switch in Shelves."),
                 },
             },
         }
@@ -520,7 +522,8 @@ function KoboldSettings:getPageDefinition(page_id)
                 desc = _("The boards the books stand on in Grid view. Off: the books show without them."),
             },
         }
-        -- The Collections chip: whether Favorites and To be read are listed in it.
+        -- The Collections chip: whether Favorites, To be read and "No collection
+        -- yet" are listed in it.
         -- (They also have chips of their own, off by default.)
         if id == "collections" then
             items[#items + 1] = { section = _("Show in Collections") }
@@ -535,6 +538,12 @@ function KoboldSettings:getPageDefinition(page_id)
                 get = function() return KoboldChips.collectionShown("favorites") end,
                 set = function(on) KoboldChips.setCollectionShown("favorites", on) end,
                 desc = _("List the Favorites collection here, on Home. Off: it is hidden from this Collections. The Library has its own switch in Library options > Tabs > Collections."),
+            }
+            items[#items + 1] = {
+                text = _("Uncollected"), kind = "toggle",
+                get = function() return KoboldChips.collectionShown(KoboldChips.NO_COLLECTION) end,
+                set = function(on) KoboldChips.setCollectionShown(KoboldChips.NO_COLLECTION, on) end,
+                desc = _("A list in this Collections, on Home, with the books that are in no collection. A book leaves it when you add it to one. Off: the list is hidden here. The Library has its own switch in Library options > Tabs > Collections."),
             }
         end
         if chip.kind == "folder" or chip.kind == "collection" then
@@ -647,12 +656,30 @@ function KoboldSettings:getPageDefinition(page_id)
                 label = (id == "custom") and _("Custom pattern") or KoboldClock.preview(id),
             }
         end
-        return radioPage(_("Clock"), options, KoboldClock.layout(), function(id)
+        local page = radioPage(_("Clock"), options, KoboldClock.layout(), function(id)
             KoboldPrefs.set("clock_layout", id)
             broadcastChange()
             -- Choosing the custom pattern opens its page, with the codes listed.
             if id == "custom" then UIManager:nextTick(function() self:pushView("clock_pattern") end) end
         end)
+        -- Below the layouts, each in its own section: only while they apply.
+        if KoboldClock.hasDate() then
+            page.items[#page.items + 1] = { section = _("Date") }
+            page.items[#page.items + 1] = {
+                text = _("Date format"), icon = "notepad-text.svg", kind = "submenu", target = "clock_date_format",
+                value = KoboldClock.formatWords(KoboldClock.formatId()),
+                desc = _("Day first or month first, with the year or without it."),
+            }
+        end
+        if KoboldClock.layout() == "custom" then
+            page.items[#page.items + 1] = { section = _("Pattern") }
+            page.items[#page.items + 1] = {
+                text = _("Custom pattern"), icon = "pencil.svg", kind = "submenu", target = "clock_pattern",
+                value = KoboldClock.customPattern(),
+                desc = _("Write what the clock shows, or go back to the default pattern."),
+            }
+        end
+        return page
     elseif page_id == "clock_date_format" then
         local options = {}
         for _i, id in ipairs(KoboldClock.FORMATS) do
@@ -734,6 +761,21 @@ function KoboldSettings:getPageDefinition(page_id)
             }
         end
         return { title = _("Stable pages"), items = items }
+    elseif page_id == "home_top" then
+        local top = KoboldPrefs.get("home_top")
+        local page = radioPage(_("Top of Home"), {
+            { id = "recent", label = _("Recent books") },
+            { id = "current", label = _("Current book") },
+            { id = "clock", label = _("Literary clock (only English)") },
+        }, (top == "current" or top == "clock") and top or "recent", function(id)
+            KoboldPrefs.set("home_top", id)
+            broadcastChange()
+        end)
+        table.insert(page.items, 1, {
+            kind = "note",
+            text = _("Recent books: the latest covers. Current book: only the last one, with shortcuts. Literary clock: a line from a book."),
+        })
+        return page
     elseif page_id == "battery" then
         return radioPage(_("Battery"), {
             { id = "fill", label = BATTERY_LABELS.fill },
@@ -758,6 +800,66 @@ function KoboldSettings:getPageDefinition(page_id)
         return radioPage(_("Rows per page"), options, tonumber(KoboldPrefs.get("library_grid_rows")) or "auto", function(n)
             KoboldPrefs.set("library_grid_rows", n ~= "auto" and n or nil)
         end)
+    end
+
+    -- Fonts: the two fonts of the plugin, and one choice page for each.
+    -- Fonts: the two fonts (opened from General), and one choice page for each.
+    if page_id == "fonts" then
+        return {
+            title = _("Fonts"),
+            items = {
+                { kind = "note", text = _("Primary: most of the text. Secondary: the details, like notes, values and section headings.") },
+                {
+                    text = _("Primary font"), font_role = "primary", kind = "submenu", target = "font_primary",
+                    value = KoboldFonts.name("primary"),
+                    desc = _("Most of the text: titles, rows, menus, buttons, tabs, chips, names and the status bar."),
+                },
+                {
+                    text = _("Secondary font"), font_role = "secondary", kind = "submenu", target = "font_secondary",
+                    value = KoboldFonts.name("secondary"),
+                    desc = _("The details: authors, book counts, section headings, notes, hints, values and counters."),
+                },
+                {
+                    text = _("Reset fonts"), icon = "undo.svg", kind = "action",
+                    disabled = not (KoboldFonts.chosen("primary") or KoboldFonts.chosen("secondary")),
+                    desc = _("Both fonts go back to KOReader's font."),
+                    callback = function()
+                        KoboldFonts.reset()
+                        broadcastChange()
+                        done()
+                    end,
+                },
+            },
+        }
+    elseif page_id == "font_primary" or page_id == "font_secondary" then
+        -- One row per font, each written in its own font. The first is KOReader's.
+        local role = (page_id == "font_primary") and "primary" or "secondary"
+        local current = KoboldFonts.chosen(role)
+        local items = {
+            {
+                text = _("KOReader font"), kind = "radio", checked = (current == nil), system_font = true,
+                on_pick = function() KoboldFonts.set(role, nil) broadcastChange() end,
+            },
+        }
+        local found = (current == nil)
+        for _i, f in ipairs(KoboldFonts.list()) do
+            if f.path == current then found = true end
+            items[#items + 1] = {
+                text = f.label, kind = "radio", checked = (f.path == current), font = f.path,
+                on_pick = function() KoboldFonts.set(role, f.path) broadcastChange() end,
+            }
+        end
+        -- The chosen font is no longer in the list (the file was removed): still shown, checked.
+        if not found then
+            table.insert(items, 2, {
+                text = KoboldFonts.name(role), kind = "radio", checked = true,
+                on_pick = function() end,
+            })
+        end
+        return {
+            title = (role == "primary") and _("Primary font") or _("Secondary font"),
+            items = items,
+        }
     end
 
     -- Unknown page: an empty one, never a crash.
@@ -948,6 +1050,15 @@ local function buildChipRow(item, w)
     return KoboldWidgets.fixed(w, row_h, group)
 end
 
+-- The face of a row's label. A row of a font list is written in its own font,
+-- so the choice can be seen before it is made.
+local function rowFace(item)
+    local face
+    if item.font then face = KoboldFonts.faceForPath(item.font, 18) end
+    if not face and item.system_font then face = KoboldFonts.systemFace(18) end
+    return face or KoboldWidgets.face(18)
+end
+
 -- One row, exactly w x row_h.
 local function buildRow(item, w)
     local row_h    = rowHeight()
@@ -971,7 +1082,8 @@ local function buildRow(item, w)
     end
     if item.value and item.kind ~= "toggle" then
         local value = TextWidget:new{
-            text = item.value, face = KoboldWidgets.face(16),
+            text = item.value,
+            face = item.font_role and KoboldFonts.face(item.font_role, 16) or KoboldWidgets.secondaryFace(16),
             fgcolor = KoboldWidgets.subtitleColor(),
             max_width = math.floor(w * 0.34),
         }
@@ -1011,7 +1123,14 @@ local function buildRow(item, w)
     -- stay aligned; radio rows have no icon) and the label.
     local left = HorizontalGroup:new{}
     local lead_w = 0
-    if item.kind ~= "radio" then
+    if item.font_role then
+        -- A font row: "Aa" written in that font instead of an icon.
+        local aa = TextWidget:new{ text = "Aa", face = KoboldFonts.face(item.font_role, 19), fgcolor = color }
+        local aa_w = aa:getSize().w
+        left[#left + 1] = aa
+        left[#left + 1] = HorizontalSpan:new{ width = icon_gap + math.max(0, icon_sz - aa_w) }
+        lead_w = math.max(icon_sz, aa_w) + icon_gap
+    elseif item.kind ~= "radio" then
         left[#left + 1] = loadSvg(item.icon, icon_sz, color) or HorizontalSpan:new{ width = icon_sz }
         left[#left + 1] = HorizontalSpan:new{ width = icon_gap }
         lead_w = icon_sz + icon_gap
@@ -1029,7 +1148,7 @@ local function buildRow(item, w)
         text_w = text_w - tick_w
     end
     left[#left + 1] = TextWidget:new{
-        text = item.text, face = KoboldWidgets.face(18),
+        text = item.text, face = rowFace(item),
         bold = item.bold or false, fgcolor = color, max_width = text_w,
     }
     if tick then
@@ -1052,7 +1171,7 @@ local function buildSection(item, w)
     return KoboldWidgets.fixed(w, h, LeftContainer:new{
         dimen = Geom:new{ w = w, h = h },
         TextWidget:new{
-            text = item.section, face = KoboldWidgets.face(14),
+            text = item.section, face = KoboldWidgets.secondaryFace(14),
             fgcolor = KoboldWidgets.subtitleColor(), max_width = w,
         },
     })
@@ -1065,7 +1184,7 @@ local function buildNote(item, w)
     return KoboldWidgets.fixed(w, h, LeftContainer:new{
         dimen = Geom:new{ w = w, h = h },
         TextBoxWidget:new{
-            text = item.text, face = KoboldWidgets.face(15),
+            text = item.text, face = KoboldWidgets.secondaryFace(15),
             fgcolor = KoboldWidgets.subtitleColor(),
             width = w, height = h - scale(8),
             height_adjust = true, height_overflow_show_ellipsis = true,
@@ -1092,9 +1211,10 @@ function KoboldSettings:build()
     local has_back = #self.history > 0
 
     -- Screen y where the rows start, and the room they have.
-    local head_y   = margin + status_h
-    local rows_top = head_y + header_h + line_h
-    local max_h    = H - rows_top - margin
+    local top_margin = bar.top
+    local head_y     = bar.bottom
+    local rows_top   = head_y + header_h + line_h
+    local max_h      = H - rows_top - margin
 
     -- Pages. With one page the rows use the full width; with more, the
     -- page bar takes the right edge.
@@ -1174,7 +1294,7 @@ function KoboldSettings:build()
     -- edge to edge; the rows start at the side margin again.
     local top = FrameContainer:new{
         bordersize = 0, padding = 0,
-        padding_top = margin, padding_left = margin, padding_right = margin,
+        padding_top = top_margin, padding_left = margin, padding_right = margin,
         VerticalGroup:new{ align = "left", self.status_bar, header },
     }
     local divider = LineWidget:new{

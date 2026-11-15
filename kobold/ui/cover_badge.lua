@@ -287,7 +287,7 @@ function CoverBadge.titlePill(name, count, cell_w, cell_h, center_x, square)
     local border = 0
     local gap = Screen:scaleBySize(6)
     local num = TextWidget:new{
-        text = tostring(count), face = KoboldWidgets.face(12), fgcolor = Blitbuffer.COLOR_LIGHT_GRAY,
+        text = tostring(count), face = KoboldWidgets.secondaryFace(12), fgcolor = Blitbuffer.COLOR_LIGHT_GRAY,
     }
     local max_w = cell_w - 2 * inset
     local label = TextWidget:new{

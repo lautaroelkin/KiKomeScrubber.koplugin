@@ -69,6 +69,21 @@ end
 -- menu points, as for a book. KOReader's built-in Favorites cannot be
 -- renamed or removed, as in KOReader.
 function Methods:showCollectionOptions(group, anchor, align)
+    -- "Uncollected" is a list, not a collection: nothing to rename, add to
+    -- or remove. Its menu opens it, or turns the list off (Settings brings it back).
+    if group.no_collection then
+        local items = {
+            { text = group.name, icon = "book-marked", bold = true,
+              action = function() self:openGroup(group) end },
+            { text = _("Disable collection"), icon = { "square-minus", "trash-2" },
+              action = function() self:confirmDisableUncollected() end },
+        }
+        require("kobold.ui.book_menu").show{
+            items = items, screen = self, anchor = anchor,
+            align = align ~= "side" and align or nil, side = align == "side",
+        }
+        return
+    end
     local RC = readCollection()
     if not RC then return end
     local name = group.key
@@ -201,6 +216,126 @@ function Methods:confirmRemoveFromCollection(item)
         on_confirm = function()
             RC:removeItem(item.file, name)  -- writes the collections file
             self:scheduleReload()
+        end,
+    }
+end
+
+-- "Disable collection" on Uncollected: a quick how-to first (how to switch it
+-- back on in Settings), then the list is turned off. Home and the Library have
+-- their own switch (Chips.collectionShown / libraryCollectionShown).
+function Methods:confirmDisableUncollected()
+    local Chips = require("kobold.data.chips")
+    local on_home = self.is_home_host == true
+    local message = on_home
+        and _("Uncollected leaves Collections. To turn it back on:\n1. More > Settings\n2. Shelves > Collections\n3. Under Show in Collections, switch on Uncollected")
+        or _("Uncollected leaves Collections. To turn it back on:\n1. More > Settings\n2. Library options > Tabs > Collections\n3. Under Show in Collections, switch on Uncollected")
+    ConfirmSheet.show{
+        title = _("Disable Uncollected?"),
+        message = message,
+        confirm_text = _("Disable"),
+        on_confirm = function()
+            if on_home then
+                Chips.setCollectionShown(Chips.NO_COLLECTION, false)
+            else
+                Chips.setLibraryCollectionShown(Chips.NO_COLLECTION, false)
+            end
+            Toast.show(_("Uncollected disabled."))
+            self:scheduleReload()
+        end,
+    }
+end
+
+-- Menu of the actions button in selection mode inside Uncollected: add the
+-- selected books to collections, or select every book of the list.
+function Methods:showUncollectedSelectionMenu(rect)
+    local n = Clipboard.count()
+    local items = {
+        { text = string.format(_("Add to collections (%d)"), n), icon = { "square-plus", "plus" },
+          action = function()
+              if n == 0 then
+                  toast(_("Select at least one book first."))
+                  return
+              end
+              self:addSelectedToCollections()
+          end },
+        { text = _("Select all"), icon = { "list-checks", "square-dot" },
+          action = function()
+              for _i, it in ipairs(self.list) do
+                  if not it.is_dir and it.file then Clipboard.add(it.file) end
+              end
+              self:refreshList()
+          end },
+    }
+    require("kobold.ui.book_menu").show{ screen = self, anchor = rect, align = "right", items = items }
+end
+
+-- The same screen as Edit book > Collections (a full-screen list with ticks),
+-- but for every selected book at once: tick the collections and Add puts all
+-- of them in each one. The books leave Uncollected by themselves.
+function Methods:addSelectedToCollections(only)
+    local RC = readCollection()
+    -- `only`: a list of files (holding one book of Uncollected); with none, the selection
+    local paths = only or Clipboard.selected()
+    if not RC or #paths == 0 then return end
+    local default_name = RC.default_collection_name or "favorites"
+    local function title(name)
+        if name == default_name then return _("Favorites") end
+        return name
+    end
+    local names = {}
+    for name in pairs(RC.coll) do names[#names + 1] = name end
+    -- Favorites first, then A to Z.
+    table.sort(names, function(a, b)
+        if (a == default_name) ~= (b == default_name) then return a == default_name end
+        return title(a):lower() < title(b):lower()
+    end)
+    local want = {}
+    local function count()
+        local n = 0
+        for _i, name in ipairs(names) do if want[name] then n = n + 1 end end
+        return n
+    end
+    require("kobold.ui.list_picker").show{
+        title = _("Add to collections"),
+        action_label = _("Add"),
+        empty_text = _("You have no collections yet."),
+        subtitle = countText(#paths),
+        rows = function()
+            local rows = {}
+            for _i, name in ipairs(names) do
+                local size = 0
+                for _k in pairs(RC.coll[name] or {}) do size = size + 1 end
+                rows[#rows + 1] = {
+                    id = name, icon = "book-marked", text = title(name),
+                    sub = (size == 1) and _("1 book") or (size .. _(" books")),
+                    marker = "tick", selected = want[name] == true, locked = false,
+                }
+            end
+            return rows
+        end,
+        count = count,
+        can_finish = function() return count() > 0 end,
+        on_tap = function(row, picker)
+            want[row.id] = not want[row.id]
+            picker:reload()
+        end,
+        on_finish = function()
+            local picked, files = {}, {}
+            for _i, name in ipairs(names) do
+                if want[name] then picked[name] = true end
+            end
+            for _i, file in ipairs(paths) do files[file] = true end
+            local ok = pcall(function()
+                RC:addItemsMultiple(files, picked)
+                RC:write(picked)
+            end)
+            if not ok then
+                Toast.error(_("The collections could not be saved."))
+                return
+            end
+            if not only then Clipboard.exitSelect() end
+            Toast.show(string.format(_("%s added to the collections."), countText(#paths)), { timeout = 4 })
+            self:reload()
         end,
     }
 end

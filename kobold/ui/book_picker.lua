@@ -50,7 +50,7 @@ local SORT_LABELS = {
 
 -- A grey rounded pill: text then a down chevron (or `icon`), exactly h tall.
 local function pill(text, h, icon, max_w)
-    local label = TextWidget:new{ text = text, face = KoboldWidgets.italicFace(15), max_width = max_w }
+    local label = TextWidget:new{ text = text, face = KoboldWidgets.face(15), max_width = max_w }
     local content = HorizontalGroup:new{
         align = "center",
         label,
@@ -167,7 +167,7 @@ function KoboldBookPicker:build()
     }
     local count = TextWidget:new{
         text = n == 1 and _("1 selected") or string.format(_("%d selected"), n),
-        face = KoboldWidgets.face(14), fgcolor = KoboldWidgets.subtitleColor(),
+        face = KoboldWidgets.secondaryFace(14), fgcolor = KoboldWidgets.subtitleColor(),
     }
     local title_row = KoboldWidgets.fixed(inner_w, title_h, LeftContainer:new{
         dimen = Geom:new{ w = inner_w, h = title_h },
@@ -228,7 +228,7 @@ function KoboldBookPicker:build()
             TextWidget:new{
                 text = (self.query or self.filter ~= "all") and _("No books match.")
                     or _("Every book is already in this collection."),
-                face = KoboldWidgets.face(15), fgcolor = KoboldWidgets.subtitleColor(),
+                face = KoboldWidgets.secondaryFace(15), fgcolor = KoboldWidgets.subtitleColor(),
                 max_width = row_w,
             },
         }

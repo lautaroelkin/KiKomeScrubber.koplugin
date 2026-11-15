@@ -43,6 +43,7 @@ local KoboldBookMenu = InputContainer:extend{
     koreader = false, -- true (Library tab): the Edit book row (opens the details page on Edit)
     on_remove = nil, -- inside a collection: adds "Remove from collection" and runs this when tapped
     on_select = nil, -- Files tab: adds "Select" and runs this when tapped
+    on_add_to_collection = nil, -- Uncollected: adds "Add to collections" for this one book
     items = nil,     -- a list of { text, icon, action = function, bold? } that replaces the book rows
 }
 
@@ -57,8 +58,8 @@ local function pickIcon(names)
     return names[#names]
 end
 
-local function italicFace(size)
-    local ok, face = pcall(function() return KoboldWidgets.italicFace(size) end)
+local function secondaryFace(size)
+    local ok, face = pcall(function() return KoboldWidgets.secondaryFace(size) end)
     if ok and face then return face end
     return KoboldWidgets.face(size)
 end
@@ -89,6 +90,9 @@ function KoboldBookMenu:build()
         if self.on_select then
             items[#items + 1] = { text = _("Select"), action = "select", icon = { "crop", "square-dot" } }
         end
+        if self.on_add_to_collection then
+            items[#items + 1] = { text = _("Add to collections"), action = "add_collection", icon = { "square-plus", "plus" } }
+        end
         if self.koreader then
             items[#items + 1] = { text = _("Edit book"), action = "edit", icon = "pencil" }
         end
@@ -111,7 +115,7 @@ function KoboldBookMenu:build()
                 HorizontalSpan:new{ width = icon_gap },
                 TextWidget:new{
                     -- a `bold` row is a title (the name of a collection, a folder)
-                    text = item.text, face = item.bold and KoboldWidgets.face(17) or italicFace(17),
+                    text = item.text, face = KoboldWidgets.face(17),
                     bold = item.bold or false,
                     max_width = inner - icon_pad - icon_size - icon_gap - text_pad,
                 },
@@ -208,6 +212,8 @@ function KoboldBookMenu:run(action)
         if self.on_select then self.on_select() end
     elseif action == "remove" then
         if self.on_remove then self.on_remove() end
+    elseif action == "add_collection" then
+        if self.on_add_to_collection then self.on_add_to_collection() end
     elseif action == "edit" then
         -- Straight to the Edit screen of the details page (the pencil).
         require("kobold.ui.book_details").show(self.file, self.screen, self.on_change, false, "edit")

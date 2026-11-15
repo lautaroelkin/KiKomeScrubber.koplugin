@@ -131,7 +131,7 @@ function Sheet:build()
     self.msg = nil
     if self.message and self.message ~= "" then
         self.msg = keep(TextBoxWidget:new{
-            text = self.message, face = KoboldWidgets.face(has_title and 15 or 17), width = inner,
+            text = self.message, face = KoboldWidgets.secondaryFace(has_title and 15 or 17), width = inner,
             fgcolor = has_title and C_TEXT or BLACK, alignment = "left",
         })
         self.msg_pos = { x = inset, y = y }
@@ -155,7 +155,7 @@ function Sheet:build()
         self.toggle_detail = nil
         if self.toggle.detail and self.toggle.detail ~= "" then
             -- a long file name is cut at its start, so its ending stays in view
-            local detail_face = KoboldWidgets.face(14)
+            local detail_face = KoboldWidgets.secondaryFace(14)
             self.toggle_detail = keep(TextWidget:new{
                 text = tailText(self.toggle.detail, detail_face, text_w), face = detail_face,
                 fgcolor = C_TEXT, max_width = text_w,

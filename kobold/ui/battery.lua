@@ -8,7 +8,7 @@
 
 local Blitbuffer      = require("ffi/blitbuffer")
 local Device          = require("device")
-local Font            = require("ui/font")
+local KoboldFonts     = require("kobold.data.fonts")
 local Geom            = require("ui/geometry")
 local IconWidget      = require("ui/widget/iconwidget")
 local TextWidget      = require("ui/widget/textwidget")
@@ -112,7 +112,7 @@ end
 
 -- The face of the percentage written beside the icon.
 local function labelFace()
-    return Font:getFace("cfont", 14)
+    return KoboldFonts.face("primary", 14)
 end
 
 local LABEL_GAP = 2   -- dp between the icon and its percentage

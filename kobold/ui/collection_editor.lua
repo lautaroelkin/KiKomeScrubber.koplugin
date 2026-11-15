@@ -550,7 +550,7 @@ function Editor:build()
         y = y + field_h
         local hint_h = U(24)
         local hint = self.name_error and TextWidget:new{
-            text = self.name_error, face = KoboldWidgets.face(13),
+            text = self.name_error, face = KoboldWidgets.secondaryFace(13),
             fgcolor = KoboldWidgets.subtitleColor(), max_width = content_w - U(18),
         } or HorizontalSpan:new{ width = 0 }
         body[#body + 1] = KoboldWidgets.fixed(content_w, hint_h, LeftContainer:new{
@@ -608,7 +608,7 @@ function Editor:build()
         rows[#rows + 1] = CenterContainer:new{
             dimen = Geom:new{ w = row_w, h = list_h },
             TextWidget:new{
-                text = self:emptyText(), face = KoboldWidgets.face(15),
+                text = self:emptyText(), face = KoboldWidgets.secondaryFace(15),
                 fgcolor = KoboldWidgets.subtitleColor(), max_width = row_w,
             },
         }

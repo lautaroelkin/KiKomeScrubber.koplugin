@@ -74,7 +74,7 @@ function StepButton:free() end
 
 -- Slider: rounded grey track, rounded black fill up to the knob, and a ring
 -- knob (thin black ring, white centre).
-local SliderBar = Widget:extend{ w = 0, h = 0, frac = 0, knob = 0, track_h = 0 }
+local SliderBar = Widget:extend{ w = 0, h = 0, frac = 0, knob = 0, track_h = 0, dragging = false }
 
 function SliderBar:getSize() return Geom:new{ w = self.w, h = self.h } end
 
@@ -83,10 +83,18 @@ function SliderBar:paintTo(bb, x, y)
     local ty = cy - math.floor(self.track_h / 2)
     local kx = math.max(0, math.min(self.w - self.knob,
         math.floor(self.frac * self.w) - math.floor(self.knob / 2)))
-    local fill_w = math.max(self.track_h, kx + math.floor(self.knob / 2))
+    -- While the knob is held there is no knob: the fill reaches exactly the
+    -- finger, like the progress bar of the Page Scrubber.
+    local fill_w
+    if self.dragging then
+        fill_w = math.max(self.track_h, math.floor(self.frac * self.w + 0.5))
+    else
+        fill_w = math.max(self.track_h, kx + math.floor(self.knob / 2))
+    end
     local tr = math.floor(self.track_h / 2)
     bb:paintRoundedRect(x, ty, self.w, self.track_h, Blitbuffer.COLOR_LIGHT_GRAY, tr)
     bb:paintRoundedRect(x, ty, fill_w, self.track_h, Blitbuffer.COLOR_BLACK, tr)
+    if self.dragging then return end
     local ring = Screen:scaleBySize(2)
     local ky = cy - math.floor(self.knob / 2)
     bb:paintRoundedRect(x + kx, ky, self.knob, self.knob, Blitbuffer.COLOR_BLACK, math.floor(self.knob / 2))
@@ -228,7 +236,7 @@ function KoboldBrightness:build()
         sections[#sections + 1] = HorizontalGroup:new{
             align = "center",
             step(false), HorizontalSpan:new{ width = slide_gap },
-            SliderBar:new{ w = track_w, h = row_h, frac = frac, knob = knob, track_h = track_h },
+            SliderBar:new{ w = track_w, h = row_h, frac = frac, knob = knob, track_h = track_h, dragging = (self.drag == i) },
             HorizontalSpan:new{ width = slide_gap }, step(true),
         }
         sections[#sections + 1] = divider()
@@ -237,6 +245,8 @@ function KoboldBrightness:build()
             minus = Geom:new{ x = x0, y = row_y, w = label_w, h = row_h },
             plus  = Geom:new{ x = x0 + inner - label_w, y = row_y, w = label_w, h = row_h },
             track = Geom:new{ x = x0 + label_w + slide_gap, y = row_y, w = track_w, h = row_h },
+            -- title row + slider row: the part that is redrawn while dragging
+            block = Geom:new{ x = fx, y = row_y - title_h, w = fw, h = title_h + row_h },
         }
     end
 
@@ -295,6 +305,7 @@ function KoboldBrightness:init()
             HoldPanBrightness     = { GestureRange:new{ ges = "hold_pan",     range = self.dimen } },
             HoldReleaseBrightness = { GestureRange:new{ ges = "hold_release", range = self.dimen } },
             SwipeBrightness       = { GestureRange:new{ ges = "swipe",        range = self.dimen } },
+            ReleaseBrightness     = { GestureRange:new{ ges = "release",      range = self.dimen } },
         }
     end
 end
@@ -306,8 +317,14 @@ function KoboldBrightness:setValue(i, value)
     s.set(value)
     self.changed = true
     self[1] = self:build()
+    -- Same as the Page Scrubber's progress bar: while dragging, a "fast"
+    -- refresh of just that slider; on release endDrag repaints it properly.
+    local mode, region = "ui", self.frame_dimen
+    if self.drag and self.hit[self.drag] then
+        mode, region = "fast", self.hit[self.drag].block
+    end
     UIManager:setDirty(self, function()
-        return "ui", self.frame_dimen
+        return mode, region
     end)
 end
 
@@ -315,6 +332,7 @@ end
 -- Taps outside the box close the popup. Taps inside the box but off a control do nothing.
 function KoboldBrightness:onTapBrightness(_, ges)
     local pos = ges.pos
+    if self.drag then self:endDrag() end
     if not pos:intersectWith(self.frame_dimen) then
         self:onClose()
         return true
@@ -373,6 +391,12 @@ function KoboldBrightness:startDrag(ges)
         local hit = self.hit[i]
         if hit and ges.pos:intersectWith(grabArea(hit)) then
             self.drag = i
+            -- The knob disappears right away, even if the level does not change yet.
+            self[1] = self:build()
+            local block = self.hit[i].block
+            UIManager:setDirty(self, function()
+                return "fast", block
+            end)
             return true
         end
     end
@@ -381,8 +405,25 @@ end
 
 function KoboldBrightness:endDrag()
     if not self.drag then return false end
+    local i = self.drag
     self.drag = nil
     self.drag_end = KoboldWidgets.now()
+    -- On release: rebuild so the knob comes back, and repaint the slider with
+    -- "partial" to clean the ghosting the "fast" refreshes left.
+    self[1] = self:build()
+    local function repaint()
+        local block = self.hit[i] and self.hit[i].block or self.frame_dimen
+        UIManager:setDirty(self, function()
+            return "partial", block
+        end)
+    end
+    repaint()
+    -- Safety net: a second repaint a moment later, in case the first one got
+    -- merged with a pending "fast" one, so the knob always shows again.
+    UIManager:scheduleIn(0.12, function()
+        if self.closed or self.drag then return end
+        repaint()
+    end)
     return true
 end
 
@@ -417,6 +458,8 @@ end
 
 function KoboldBrightness:onPanReleaseBrightness() return self:endDrag() end
 function KoboldBrightness:onHoldReleaseBrightness() return self:endDrag() end
+-- Finger lifted without a pan_release / hold_release reaching us (it ended as a swipe, or never moved)
+function KoboldBrightness:onReleaseBrightness() return self:endDrag() end
 
 -- The swipe that can follow a quick drag must not do anything else.
 function KoboldBrightness:onSwipeBrightness()
@@ -484,6 +527,7 @@ function KoboldBrightness:toggleNightMode()
 end
 
 function KoboldBrightness:onClose()
+    self.closed = true
     if self.changed then saveLight() end
     KoboldPopup.close(self)
     return true
