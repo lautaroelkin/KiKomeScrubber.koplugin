@@ -358,6 +358,15 @@ msgstr "%d de %d páginas"
 msgid "Read now"
 msgstr "Ler agora"
 
+msgid "Metadata pages"
+msgstr "Páginas dos Metadados"
+
+msgid "M.Data Pages"
+msgstr "Págs. M.Data"
+
+msgid "Stable pgs"
+msgstr "Págs. estáveis"
+
 msgid "Pages"
 msgstr "Páginas"
 
@@ -1126,8 +1135,8 @@ msgstr "Preparando %d capas em segundo plano."
 msgid "General"
 msgstr "Geral"
 
-msgid "Opening pill, rounded corners, cover outline and the status bar."
-msgstr "Etiqueta \"Abrindo\", cantos arredondados, contorno da capa e a barra de status."
+msgid "Opening pill, rounded corners, cover outline, fonts and the status bar."
+msgstr "Etiqueta \"Abrindo\", cantos arredondados, contorno da capa, fontes e a barra de status."
 
 msgid "Shelves"
 msgstr "Estantes"
@@ -1822,9 +1831,222 @@ msgstr "As páginas mudam com o tamanho da fonte"
 msgid "No Pages in Metadata: KOReader's numbering is used"
 msgstr "Sem páginas nos Metadados: usa-se a numeração do KOReader"
 
-
 msgid "Off: stable pages off in every book. KOReader numbering: every book shows stable pages, with KOReader's own count. Metadata page count: books with Pages in Metadata > More details use that number, the others use KOReader's. With no choice made, KiKome follows KOReader's own setting. A book can have its own choice."
 msgstr "Desativado: sem páginas estáveis em todos os livros. Numeração do KOReader: todos os livros mostram páginas estáveis, com a contagem própria do KOReader. Número de páginas dos Metadados: os livros com Páginas em Metadados > Mais detalhes usam esse número, os demais usam o do KOReader. Se você não escolheu nada, o KiKome segue o ajuste próprio do KOReader. Um livro pode ter a sua própria escolha."
 
 msgid "Bold: in use now. Dot: your choice, for all books; tap it again to follow KOReader's setting."
 msgstr "Negrito: o que está em uso agora. Ponto: a sua escolha, para todos os livros; toque de novo para seguir o ajuste do KOReader."
+
+msgid "Fonts"
+msgstr "Fontes"
+
+msgid "Primary font"
+msgstr "Fonte principal"
+
+msgid "Secondary font"
+msgstr "Fonte secundária"
+
+msgid "KOReader font"
+msgstr "Fonte do KOReader"
+
+msgid "Reset fonts"
+msgstr "Redefinir fontes"
+
+msgid "Bold"
+msgstr "Negrito"
+
+msgid "Italic"
+msgstr "Itálico"
+
+msgid "Both fonts go back to KOReader's font."
+msgstr "As duas fontes voltam à fonte do KOReader."
+
+msgid "Pattern"
+msgstr "Padrão"
+
+msgid "A primary font for most of the text and a secondary one for the details. By default both are KOReader's font."
+msgstr "Uma fonte principal para a maior parte do texto e uma secundária para os detalhes. Por padrão, as duas são a fonte do KOReader."
+
+msgid "Primary: most of the text. Secondary: the details, like notes, values and section headings."
+msgstr "Principal: a maior parte do texto. Secundária: os detalhes, como notas, valores e títulos de seção."
+
+msgid "Most of the text: titles, rows, menus, buttons, tabs, chips, names and the status bar."
+msgstr "A maior parte do texto: títulos, linhas, menus, botões, abas, chips, nomes e a barra de status."
+
+msgid "The details: authors, book counts, section headings, notes, hints, values and counters."
+msgstr "Os detalhes: autores, quantidade de livros, títulos de seção, notas, dicas, valores e contadores."
+
+msgid "Uncollected"
+msgstr "Sem coleção"
+
+msgid "A list in the Library's Collections with the books that are in no collection. A book leaves it when you add it to one. Off: the list is hidden there. Home has its own switch in Shelves."
+msgstr "Uma lista nas Coleções da Biblioteca com os livros que não estão em nenhuma coleção. Um livro sai dela quando você o adiciona a uma. Desativado: a lista fica oculta lá. O Início tem seu próprio controle em Estantes."
+
+msgid "A list in this Collections, on Home, with the books that are in no collection. A book leaves it when you add it to one. Off: the list is hidden here. The Library has its own switch in Library options > Tabs > Collections."
+msgstr "Uma lista nestas Coleções, no Início, com os livros que não estão em nenhuma coleção. Um livro sai dela quando você o adiciona a uma. Desativado: a lista fica oculta aqui. A Biblioteca tem seu próprio controle em Opções da biblioteca > Guias > Coleções."
+
+msgid "Top of Home"
+msgstr "Topo do Início"
+
+msgid "Recent books"
+msgstr "Livros recentes"
+
+msgid "Current book"
+msgstr "Livro atual"
+
+msgid "What Home shows above the shelves: the row of recent books, one card with the book you are reading, or a clock that tells the time with a line from a book."
+msgstr "O que o Início mostra acima das estantes: a fileira de livros recentes, um cartão com o livro que você está lendo, ou um relógio que diz a hora com uma frase de um livro."
+
+msgid "Recent books: the latest covers. Current book: only the last one, with shortcuts. Clock: the time, with a line from a book that mentions it."
+msgstr "Livros recentes: as últimas capas. Livro atual: só o último, com atalhos. Relógio: a hora, com uma frase de um livro que a menciona."
+
+msgid "Page %d of %d"
+msgstr "Página %d de %d"
+
+msgid "<1 minute left in chapter"
+msgstr "<1 minuto para terminar o capítulo"
+
+msgid "1 minute left in chapter"
+msgstr "1 minuto para terminar o capítulo"
+
+msgid "%d minutes left in chapter"
+msgstr "%d minutos para terminar o capítulo"
+
+msgid "%d h %d min left in chapter"
+msgstr "%d h %d min para terminar o capítulo"
+
+msgid "%s left in chapter"
+msgstr "%s para terminar o capítulo"
+
+msgid "%s is not available. The plugin may be turned off."
+msgstr "%s não está disponível. O plugin pode estar desativado."
+
+msgid "Plugin"
+msgstr "Plugin"
+
+msgid "KOReader action"
+msgstr "Ação do KOReader"
+
+msgid "No icons"
+msgstr "Sem ícones"
+
+msgid "%d+ icons"
+msgstr "%d+ ícones"
+
+msgid "1 icon"
+msgstr "1 ícone"
+
+msgid "%d icons"
+msgstr "%d ícones"
+
+msgid "Use icon"
+msgstr "Usar ícone"
+
+msgid "Choose an icon"
+msgstr "Escolha um ícone"
+
+msgid "No folders or icons here."
+msgstr "Não há pastas nem ícones aqui."
+
+msgid "Next"
+msgstr "Avançar"
+
+msgid "No plugins with menu entries were found."
+msgstr "Nenhum plugin com itens de menu foi encontrado."
+
+msgid "What should it run?"
+msgstr "O que ela deve executar?"
+
+msgid "Action name"
+msgstr "Nome da ação"
+
+msgid "The action could not be saved."
+msgstr "Não foi possível salvar a ação."
+
+msgid "Skip"
+msgstr "Pular"
+
+msgid "Action added."
+msgstr "Ação adicionada."
+
+msgid "Default icon"
+msgstr "Ícone padrão"
+
+msgid "Action updated."
+msgstr "Ação atualizada."
+
+msgid "Delete this action?"
+msgstr "Excluir esta ação?"
+
+msgid "It is taken out of Actions. What it runs is not changed."
+msgstr "Ela sai de Ações. O que ela executa não é alterado."
+
+msgid "Change icon"
+msgstr "Alterar ícone"
+
+msgid "Change what it runs"
+msgstr "Alterar o que ela executa"
+
+msgid "Move earlier"
+msgstr "Mover para antes"
+
+msgid "Move later"
+msgstr "Mover para depois"
+
+msgid "Actions"
+msgstr "Ações"
+
+msgid "Add an action"
+msgstr "Adicionar uma ação"
+
+msgid "Choose what it runs, a name and an icon."
+msgstr "Escolha o que ela executa, um nome e um ícone."
+
+msgid "Hide Add tile"
+msgstr "Ocultar o bloco Adicionar"
+
+msgid "Show Add tile"
+msgstr "Mostrar o bloco Adicionar"
+
+msgid "Disable collection"
+msgstr "Desativar coleção"
+
+msgid "Disable Uncollected?"
+msgstr "Desativar Sem coleção?"
+
+msgid "Disable"
+msgstr "Desativar"
+
+msgid "Uncollected disabled."
+msgstr "Sem coleção desativada."
+
+msgid "Add to collections (%d)"
+msgstr "Adicionar às coleções (%d)"
+
+msgid "%s added to the collections."
+msgstr "%s adicionado(s) às coleções."
+
+msgid "Uncollected leaves Collections. To turn it back on:\n1. More > Settings\n2. Shelves > Collections\n3. Under Show in Collections, switch on Uncollected"
+msgstr "Sem coleção sai de Coleções. Para ativar de novo:\n1. Mais > Configurações\n2. Estantes > Coleções\n3. Em Mostrar em Coleções, ative Sem coleção"
+
+msgid "Uncollected leaves Collections. To turn it back on:\n1. More > Settings\n2. Library options > Tabs > Collections\n3. Under Show in Collections, switch on Uncollected"
+msgstr "Sem coleção sai de Coleções. Para ativar de novo:\n1. Mais > Configurações\n2. Opções da biblioteca > Guias > Coleções\n3. Em Mostrar em Coleções, ative Sem coleção"
+
+msgid "Leave KiKome?"
+msgstr "Sair do KiKome?"
+
+msgid "You will go back to KOReader."
+msgstr "Você voltará ao KOReader."
+
+msgid "Leave"
+msgstr "Sair"
+
+msgid "Clock card"
+msgstr "Cartão do relógio"
+
+msgid "Title and author"
+msgstr "Título e autor"
+
+msgid "The book and the author of the quote, under it."
+msgstr "O livro e o autor da frase, abaixo dela."
+
