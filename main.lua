@@ -284,6 +284,31 @@ function Kobold:onCloseDocument()
     end
 end
 
+-- The reader is saving the book (on closing it, on suspend, when KiKome parks
+-- it): keep how much is left in the current chapter in its sidecar, for Home's
+-- "minutes left in chapter" (see kobold/data/chapter_left.lua). The event goes on.
+function Kobold:onSaveSettings()
+    local ui = self.ui
+    if not (ui and ui.document and ui.doc_settings) then return end
+    -- stable pages turned on or off in KOReader's menu: the book's choice follows, before it is saved
+    pcall(function() require("kobold.data.stable_pages").syncNative(ui) end)
+    local ok, err = pcall(function()
+        local snap = require("kobold.data.chapter_left").snapshot(ui)
+        ui.doc_settings:saveSetting("kikome_chapter_left", snap)
+        if not snap then require("logger").dbg("KiKome: no chapter data to keep for", ui.document.file) end
+    end)
+    if not ok then require("logger").warn("KiKome: chapter data failed:", tostring(err)) end
+end
+
+-- KOReader's switch "Use reference page numbers" changed (its own menu, or KiKome's apply(), which
+-- sync ignores): a moment later, once whatever changed it has finished, the book's choice follows.
+function Kobold:onUsePageLabelsUpdated()
+    local ui = self.ui
+    UIManager:nextTick(function()
+        pcall(function() require("kobold.data.stable_pages").syncNative(ui) end)
+    end)
+end
+
 -- KOReader's "Exit" event (the Exit KOReader action of gestures and profiles):
 -- KiKome closes its windows so KOReader can quit. The event goes on to KOReader.
 function Kobold:onExit()
