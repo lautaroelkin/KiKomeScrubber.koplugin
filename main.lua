@@ -174,6 +174,10 @@ function Kobold:init()
         UIManager:nextTick(function() self:_wireFastFileBrowserTab(true) end)
     end
 
+    -- The Action center: a first tab in KOReader's menu, on Home and in a book
+    -- (kobold/ui/menu_tab.lua). Off until it is turned on in Settings.
+    pcall(function() require("kobold.ui.menu_tab").install(self.ui, self) end)
+
     -- The real close of a parked book builds a new file browser, which runs
     -- this init again: park.lua puts the screen back itself, so nothing else
     -- is done here.
@@ -200,6 +204,8 @@ function Kobold:init()
             local Session = require("kobold.ui.session")
             self:showWithFileManager(function()
                 local parked = back.screen
+                -- the book is closed: covers get their normal memory budget back
+                require("kobold.data.memory").afterReader()
                 require("kobold.ui.transition").close()
                 require("kobold.ui.reader").opened()
                 if parked and Session.raise(parked) then
@@ -278,6 +284,8 @@ function Kobold:onCloseDocument()
         Park.noteRealClose()
         if Park.isFinishing() or Park.isSwitching() then return end
     end
+    local Splash = package.loaded["kobold.ui.cover_splash"]
+    if Splash and Splash.region() then return end
     if Session.returning() then
         local _ = require("kobold.i18n")
         require("kobold.ui.transition").show(_("Closing"))
@@ -353,6 +361,11 @@ end
 -- The reader menu has built its items by now (or is about to be shown).
 function Kobold:onReaderReady()
     self:_wireFastFileBrowserTab(true)
+    local Splash = package.loaded["kobold.ui.cover_splash"]
+    if Splash and Splash.region() then
+        Splash.close()
+        UIManager:setDirty("all", "full")
+    end
     -- A book whose page count was put in Metadata > More details gets KOReader's
     -- stable page numbers made to match it (see kobold/data/stable_pages.lua).
     -- Unless the book was set to KOReader's numbering (Edit > Book settings >
@@ -370,6 +383,17 @@ function Kobold:onReaderReady()
             elseif changed then
                 require("kobold.data.stable_pages").announce(ui, status, size)
             end
+        end)
+    end
+    -- A moment after the book is open (its loading is done): garbage from the
+    -- loading is collected and, with memory still short, the KiKome screen
+    -- parked under the book is let go (see kobold/data/memory.lua).
+    do
+        local ui = self.ui
+        UIManager:scheduleIn(2.5, function()
+            local RU = package.loaded["apps/reader/readerui"]
+            if not (ui and ui.document and RU and RU.instance == ui) then return end
+            pcall(function() require("kobold.data.memory").trimParked() end)
         end)
     end
     -- "Show in book" from the annotations list of Book Details: the book is
@@ -492,6 +516,10 @@ function Kobold:_warmUp()
     warmed = true
     local i = 0
     local function step()
+        -- Memory is short: the other screens load when they are first opened,
+        -- as they would without warming up (see kobold/data/memory.lua).
+        local ok_mem, Memory = pcall(require, "kobold.data.memory")
+        if ok_mem and not Memory.canPrewarm() then return end
         i = i + 1
         local name = WARM_MODULES[i]
         if not name then return end
