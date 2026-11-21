@@ -1135,8 +1135,8 @@ msgstr "Preparando %d capas em segundo plano."
 msgid "General"
 msgstr "Geral"
 
-msgid "Opening pill, rounded corners, cover outline, fonts and the status bar."
-msgstr "Etiqueta \"Abrindo\", cantos arredondados, contorno da capa, fontes e a barra de status."
+msgid "Opening pill, instant exit from books, stable pages and the status bar."
+msgstr "Etiqueta \"Abrindo\", saída instantânea dos livros, páginas estáveis e a barra de status."
 
 msgid "Shelves"
 msgstr "Estantes"
@@ -1180,8 +1180,8 @@ msgstr "Ao sair de um livro o KiKome é exibido imediatamente; o livro é realme
 msgid "Rounded corners"
 msgstr "Cantos arredondados"
 
-msgid "Round the corners of the covers on Home and in the library, folders included. Off: square corners."
-msgstr "Arredondar os cantos das capas no Início e na biblioteca, incluindo pastas. Desativado: cantos retos."
+msgid "Round the corners of the covers on Home and in the library, folders and empty collections included. Off: square corners."
+msgstr "Arredondar os cantos das capas no Início e na biblioteca, incluindo pastas e coleções vazias. Desativado: cantos retos."
 
 msgid "Cover outline"
 msgstr "Contorno da capa"
@@ -2020,6 +2020,9 @@ msgstr "Desativar"
 msgid "Uncollected disabled."
 msgstr "Sem coleção desativada."
 
+msgid "The selected books are already in every collection."
+msgstr "Os livros selecionados já estão em todas as coleções."
+
 msgid "Add to collections (%d)"
 msgstr "Adicionar às coleções (%d)"
 
@@ -2050,3 +2053,165 @@ msgstr "Título e autor"
 msgid "The book and the author of the quote, under it."
 msgstr "O livro e o autor da frase, abaixo dela."
 
+
+msgid "Appearance"
+msgstr "Aparência"
+
+msgid "Fonts, cover outline and rounded corners."
+msgstr "Fontes, contorno da capa e cantos arredondados."
+
+msgid "%d of %d already added"
+msgstr "%d de %d já adicionados"
+
+msgid "Statistics"
+msgstr "Estatísticas"
+
+msgid "Time read"
+msgstr "Tempo de leitura"
+
+msgid "Pages read"
+msgstr "Páginas lidas"
+
+msgid "Reading days"
+msgstr "Dias de leitura"
+
+msgid "Last 7 days"
+msgstr "Últimos 7 dias"
+
+msgid "Time left"
+msgstr "Tempo restante"
+
+msgid "Last read"
+msgstr "Última leitura"
+
+msgid "First read"
+msgstr "Primeira leitura"
+
+msgid "Daily average"
+msgstr "Média diária"
+
+msgid "Per page"
+msgstr "Por página"
+
+msgid "About %s"
+msgstr "Cerca de %s"
+
+msgid "No reading statistics yet"
+msgstr "Ainda não há estatísticas de leitura"
+
+msgid "Read a few pages and they will show up here."
+msgstr "Leia algumas páginas e elas aparecerão aqui."
+
+msgid "< 1 min"
+msgstr "< 1 min"
+
+msgid "%d min"
+msgstr "%d min"
+
+msgid "%d h"
+msgstr "%d h"
+
+msgid "%d h %d min"
+msgstr "%d h %d min"
+
+msgid "%d s"
+msgstr "%d s"
+
+msgid "Your actions"
+msgstr "Suas ações"
+
+msgid "The actions you made: a name, an icon and what they run. Make new ones and choose where they show."
+msgstr "As ações que você criou: um nome, um ícone e o que elas executam. Crie novas e escolha onde aparecem."
+
+msgid "No actions yet. Tap New action to make one."
+msgstr "Ainda não há ações. Toque em Nova ação para criar uma."
+
+msgid "New action"
+msgstr "Nova ação"
+
+msgid "Pick what it runs (a KOReader action or a plugin), then give it a name and an icon. It shows on Home right away."
+msgstr "Escolha o que ela executa (uma ação do KOReader ou um plugin), depois dê um nome e um ícone. Ela aparece no Início na hora."
+
+msgid "Show in"
+msgstr "Mostrar em"
+
+msgid "%d of %d"
+msgstr "%d de %d"
+
+msgid "Which actions the Actions chip of Home shows, and in what order."
+msgstr "Quais ações o chip Ações do Início mostra, e em que ordem."
+
+msgid "Show in Home"
+msgstr "Mostrar no Início"
+
+msgid "The Actions chip of Home shows this action. Off: it stays in your actions, Home does not show it."
+msgstr "O chip Ações do Início mostra esta ação. Desligado: ela continua nas suas ações, mas o Início não a mostra."
+
+msgid "Delete action"
+msgstr "Excluir ação"
+
+msgid "Deletes it for good, from every place that shows it."
+msgstr "Exclui para sempre, de todos os lugares onde aparece."
+
+msgid "Action"
+msgstr "Ação"
+
+msgid "Choose which actions the Actions chip of Home shows, and in what order."
+msgstr "Escolha quais ações o chip Ações do Início mostra, e em que ordem."
+
+msgid "The Actions chip is off. Turn it on in Shelves to see these actions on Home."
+msgstr "O chip Ações está desligado. Ligue-o em Estantes para ver estas ações no Início."
+
+msgid "No actions yet."
+msgstr "Ainda não há ações."
+
+msgid "Hide from Home"
+msgstr "Ocultar do Início"
+
+msgid "It is deleted for good. What it runs is not changed."
+msgstr "É excluída para sempre. O que ela executa não é alterado."
+
+msgid "Home (Chip)"
+msgstr "Início (Chip)"
+
+msgid "Action center"
+msgstr "Central de ações"
+
+
+
+
+
+
+msgid "On"
+msgstr "Ligado"
+
+msgid "No actions here yet. Choose them in Settings > Your actions > Action center."
+msgstr "Ainda não há ações aqui. Escolha-as em Ajustes > Suas ações > Central de ações."
+
+msgid "A first tab in KOReader's menu, on Home and in books, with the book you are reading and your actions."
+msgstr "Uma primeira aba no menu do KOReader, no Início e dentro dos livros, com o livro que você está lendo e suas ações."
+
+
+msgid "Open KOReader's menu to see it. Actions that switch something on or off show whether it is on."
+msgstr "Abra o menu do KOReader para vê-lo. As ações que ligam ou desligam algo mostram se está ligado."
+
+msgid "Adds a first tab to KOReader's menu, on Home and in books, with your actions as round buttons and the book you are reading. The other tabs stay next to it, unless you tap Hide there."
+msgstr "Adiciona uma primeira aba ao menu do KOReader, no Início e dentro dos livros, com suas ações como botões redondos e o livro que você está lendo. As outras abas ficam ao lado, a menos que você toque em Ocultar ali."
+
+msgid "Hide"
+msgstr "Ocultar"
+
+msgid "Show in documents"
+msgstr "Mostrar em documentos"
+
+msgid "Where the Action center shows this action: on Home, in books."
+msgstr "Onde a Central de ações mostra esta ação: no Início, nos livros."
+
+msgid "The Action center shows this action when it opens on Home."
+msgstr "A Central de ações mostra esta ação quando abre no Início."
+
+msgid "The Action center shows this action when it opens inside a book."
+msgstr "A Central de ações mostra esta ação quando abre dentro de um livro."
+
+msgid "No other recent books."
+msgstr "Não há outros livros recentes."
