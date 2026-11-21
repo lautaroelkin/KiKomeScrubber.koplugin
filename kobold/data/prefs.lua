@@ -104,6 +104,109 @@ function KoboldPrefs.resetAll()
     revision = revision + 1
 end
 
+-- Top of Home views: ordered list of { id = "recent"|"current"|"clock", enabled = bool }.
+local HOME_TOP_ORDER = { "recent", "current", "clock" }
+local HOME_TOP_VALID = { recent = true, current = true, clock = true }
+
+function KoboldPrefs.homeTopList()
+    local t = all()
+    local saved = t.home_top_items
+    local out, seen = {}, {}
+    if type(saved) == "table" then
+        for _i, e in ipairs(saved) do
+            if type(e) == "table" and HOME_TOP_VALID[e.id] and not seen[e.id] then
+                seen[e.id] = true
+                out[#out + 1] = { id = e.id, enabled = e.enabled == true }
+            end
+        end
+        for _i, id in ipairs(HOME_TOP_ORDER) do
+            if not seen[id] then
+                seen[id] = true
+                out[#out + 1] = { id = id, enabled = false }
+            end
+        end
+    else
+        local legacy = t.home_top
+        local first = (legacy == "current" or legacy == "clock") and legacy or "recent"
+        out[#out + 1] = { id = first, enabled = true }
+        for _i, id in ipairs(HOME_TOP_ORDER) do
+            if id ~= first then
+                out[#out + 1] = { id = id, enabled = false }
+            end
+        end
+    end
+    local any = false
+    for _i, e in ipairs(out) do
+        if e.enabled then any = true; break end
+    end
+    if not any and out[1] then out[1].enabled = true end
+    return out
+end
+
+function KoboldPrefs.homeTopEnabled()
+    local out = {}
+    for _i, e in ipairs(KoboldPrefs.homeTopList()) do
+        if e.enabled then out[#out + 1] = e.id end
+    end
+    return out
+end
+
+local function saveHomeTopList(list)
+    if not G_reader_settings then return end
+    local t = all()
+    local saved = {}
+    local first_enabled
+    for _i, e in ipairs(list) do
+        saved[#saved + 1] = { id = e.id, enabled = e.enabled and true or false }
+        if e.enabled and not first_enabled then first_enabled = e.id end
+    end
+    t.home_top_items = saved
+    if first_enabled then t.home_top = first_enabled end
+    G_reader_settings:saveSetting(KEY, t)
+    revision = revision + 1
+end
+
+function KoboldPrefs.setHomeTopEnabled(id, on)
+    local list = KoboldPrefs.homeTopList()
+    local enabled_count = 0
+    for _i, e in ipairs(list) do
+        if e.enabled then enabled_count = enabled_count + 1 end
+    end
+    for _i, e in ipairs(list) do
+        if e.id == id then
+            if not on and e.enabled and enabled_count <= 1 then
+                return false, "last"
+            end
+            e.enabled = on and true or false
+            saveHomeTopList(list)
+            return true
+        end
+    end
+    return false
+end
+
+function KoboldPrefs.moveHomeTop(id, dir)
+    local list = KoboldPrefs.homeTopList()
+    local idx
+    for i, e in ipairs(list) do
+        if e.id == id then idx = i; break end
+    end
+    if not idx then return false end
+    local target = idx + dir
+    if target < 1 or target > #list then return false end
+    list[idx], list[target] = list[target], list[idx]
+    saveHomeTopList(list)
+    return true
+end
+
+function KoboldPrefs.homeTopSignature()
+    local parts = {}
+    for _i, e in ipairs(KoboldPrefs.homeTopList()) do
+        parts[#parts + 1] = e.id .. (e.enabled and "+" or "-")
+    end
+    return table.concat(parts, "|")
+end
+
 -- Books per page on cover lists, kept inside the allowed range.
 function KoboldPrefs.coverRows()
     local n = tonumber(KoboldPrefs.get("cover_rows")) or DEFAULTS.cover_rows

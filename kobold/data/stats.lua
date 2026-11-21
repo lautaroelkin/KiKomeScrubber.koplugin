@@ -226,4 +226,52 @@ function KoboldStats.secondsPerPage(md5s)
     return rates
 end
 
+-- Reading statistics of one book, by its partial md5. Returns nil when the
+-- statistics database is unavailable; otherwise a table with:
+--   seconds, pages (distinct), days (with reading), first and last (os.time or nil),
+--   book_pages (the page count the statistics use),
+--   week = the last 7 days, today last: { label = "M", seconds = 0, pages = 0, ts = os.time (noon), today = false }
+function KoboldStats.bookStats(md5)
+    if type(md5) ~= "string" or not md5:match("^%x+$") then return nil end
+    local today = todayStart()
+    local r = query("book:" .. md5 .. ":" .. today, function(conn)
+        local where = string.format("id_book IN (SELECT id FROM book WHERE md5 = '%s')", md5)
+        local res = conn:exec("SELECT SUM(duration), COUNT(DISTINCT page),"
+            .. " COUNT(DISTINCT date(start_time, 'unixepoch', 'localtime')),"
+            .. " MIN(start_time), MAX(start_time) FROM page_stat WHERE " .. where .. ";")
+        local function num(col) return res and res[col] and tonumber(res[col][1]) end
+        local out = {
+            seconds = num(1) or 0, pages = num(2) or 0, days = num(3) or 0,
+            first = num(4), last = num(5),
+        }
+        out.book_pages = tonumber(firstValue(conn, string.format(
+            "SELECT pages FROM book WHERE md5 = '%s' ORDER BY last_open DESC LIMIT 1;", md5), 1))
+        -- seconds read on each of the last 7 days
+        local per_day, pages_day = {}, {}
+        local wk = conn:exec(string.format(
+            "SELECT date(start_time, 'unixepoch', 'localtime') AS d, SUM(duration), COUNT(DISTINCT page)"
+            .. " FROM page_stat WHERE %s AND start_time >= %d GROUP BY d;", where, today - 8 * 86400))
+        if wk and wk[1] and wk[2] then
+            for i, d in ipairs(wk[1]) do
+                per_day[d] = tonumber(wk[2][i]) or 0
+                pages_day[d] = wk[3] and tonumber(wk[3][i]) or 0
+            end
+        end
+        local now = os.date("*t")
+        out.week = {}
+        for offset = 6, 0, -1 do
+            local ts = os.time{ year = now.year, month = now.month, day = now.day - offset, hour = 12 }
+            out.week[#out.week + 1] = {
+                label = os.date("%a", ts):sub(1, 1):upper(),
+                seconds = per_day[os.date("%Y-%m-%d", ts)] or 0,
+                pages = pages_day[os.date("%Y-%m-%d", ts)] or 0,
+                ts = ts,
+                today = offset == 0,
+            }
+        end
+        return out
+    end)
+    return r and r.value or nil
+end
+
 return KoboldStats

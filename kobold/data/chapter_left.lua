@@ -48,10 +48,46 @@ function ChapterLeft.snapshot(ui)
     if type(pageno) ~= "number" and doc.getCurrentPage then pageno = doc:getCurrentPage() end
     if type(pageno) ~= "number" then return nil end
 
-    -- pages left in the chapter: up to the next one, not counting this page; in
-    -- the last chapter, up to the end (as the status bar item does)
+    -- pages left in the chapter: same logic as scrubber_toc.lua
     local left
-    if ui.toc and ui.toc.getChapterPagesLeft then
+    local raw_toc = ui.toc and ui.toc.toc
+    if type(raw_toc) == "table" and #raw_toc > 0 then
+        local flat = {}
+        local min_d = 999
+        for _i, e in ipairs(raw_toc) do
+            local p = e.page or e.pageno
+            if not p and e.pos0 and doc and doc.getPageFromXPointer then
+                pcall(function() p = doc:getPageFromXPointer(e.pos0) end)
+            end
+            p = tonumber(p)
+            if p and p >= 1 and p <= total then
+                local d = tonumber(e.depth) or 1
+                if d <= 3 then
+                    flat[#flat + 1] = { page = math.floor(p), depth = d }
+                    if d < min_d then min_d = d end
+                end
+            end
+        end
+        if #flat > 0 then
+            if min_d < 999 and min_d > 0 then
+                for _i, ch in ipairs(flat) do ch.depth = ch.depth - min_d end
+            end
+            local cur_idx = 1
+            for i, ch in ipairs(flat) do
+                if ch.page <= pageno then cur_idx = i else break end
+            end
+            local cur_depth = flat[cur_idx].depth or 0
+            local next_page, has_next = total, false
+            for j = cur_idx + 1, #flat do
+                if (flat[j].depth or 0) <= cur_depth then
+                    next_page, has_next = flat[j].page, true
+                    break
+                end
+            end
+            left = has_next and (next_page - pageno - 1) or (next_page - pageno)
+        end
+    end
+    if left == nil and ui.toc and ui.toc.getChapterPagesLeft then
         local ok, n = pcall(ui.toc.getChapterPagesLeft, ui.toc, pageno)
         if ok then left = tonumber(n) end
     end
@@ -60,7 +96,7 @@ function ChapterLeft.snapshot(ui)
         if ok then left = tonumber(n) end
     end
     if not left then return nil end
-    left = math.max(0, left)
+    left = math.max(0, math.floor(left))
 
     -- the position, as the reader saves it in percent_finished
     local pct
@@ -78,7 +114,7 @@ function ChapterLeft.snapshot(ui)
     if stats and left > 0 then
         if type(stats.getTimeForPages) == "function" then
             local ok, t = pcall(stats.getTimeForPages, stats, left)
-            if ok and type(t) == "string" and t:find("%d") then
+            if ok and type(t) == "string" and t ~= "" and t:find("%d") then
                 text = t
                 seconds = ChapterLeft.parseDuration(t)
             end

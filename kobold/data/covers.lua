@@ -25,7 +25,9 @@ local Screen = Device.screen
 
 local KoboldCovers = {}
 
-local BYTE_BUDGET = 12 * 1024 * 1024
+-- The budget follows the device and whether a book is open (data/memory.lua
+-- sets it with KoboldCovers.setBudget); this is the most it ever is.
+local byte_budget = 12 * 1024 * 1024
 
 local cache = {}       -- [file] = { bb, bytes, used, full } or false (no cover)
 local cache_bytes = 0
@@ -61,7 +63,7 @@ local function checkFingerprint()
 end
 
 local function evict()
-    while cache_bytes > BYTE_BUDGET do
+    while cache_bytes > byte_budget do
         local oldest_file, oldest_used = nil, math.huge
         for file, entry in pairs(cache) do
             if entry and entry.used < oldest_used then
@@ -72,6 +74,20 @@ local function evict()
         cache_bytes = cache_bytes - cache[oldest_file].bytes
         cache[oldest_file] = nil
     end
+end
+
+-- Sets how many bytes of covers are kept in memory. Lowering it lets go of the
+-- oldest covers at once (a screen that still draws one keeps it alive until it
+-- is gone itself). A book's covers are read again from disk when needed.
+function KoboldCovers.setBudget(bytes)
+    bytes = tonumber(bytes)
+    if not bytes or bytes < 0 then return end
+    byte_budget = math.floor(bytes)
+    evict()
+end
+
+function KoboldCovers.budget()
+    return byte_budget
 end
 
 local function store(file, bb, full)

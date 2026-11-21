@@ -124,6 +124,10 @@ end
 
 function CoverColor.pill(file)
     if not file or not canPaintColour() then return nil end
+    -- Night mode: a tinted pill is drawn two ways at once (its straight middle is
+    -- inverted, its round ends are not), so it showed two colours. The plain grey the
+    -- other pills and tiles use is drawn the same all over.
+    if Screen.night_mode then return nil end
     local s = shade(file)
     if not s then return nil end
     local hue = s.hue

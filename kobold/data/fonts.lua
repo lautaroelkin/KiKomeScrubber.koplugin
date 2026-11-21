@@ -6,7 +6,7 @@
 --   secondary  the details: authors, book counts, section headings, notes,
 --              hints, values on the right, counters, placeholders.
 --
--- Each one is a font file chosen in Settings > Fonts (stored as a path in the
+-- Each one is a font file chosen in Settings > Appearance > Fonts (stored as a path in the
 -- "font_primary" / "font_secondary" settings). With nothing chosen, or when the
 -- file can no longer be loaded, it is KOReader's own font ("cfont"), the one
 -- the rest of KOReader uses, so by default the plugin looks like KOReader.
