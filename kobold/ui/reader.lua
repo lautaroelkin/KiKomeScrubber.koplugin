@@ -116,6 +116,9 @@ function KoboldReader.open(screen, file, opts)
         local ok, err = pcall(function()
             -- Another book is parked: it closes first, inside this wait.
             if Park.isParked() then Park.closeForSwitch() end
+            -- What KiKome keeps in memory is cut down and the garbage collected
+            -- before the book loads: a big book needs all the memory it can get.
+            require("kobold.data.memory").releaseForReader()
             local ReaderUI = package.loaded["apps/reader/readerui"]
                 or require("apps/reader/readerui")
             -- With the pill on, KOReader's own "Opening file" message is

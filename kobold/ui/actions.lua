@@ -47,14 +47,59 @@ function KoboldActions.title(id)
     return def and def.title and tostring(def.title) or tostring(id)
 end
 
--- Runs action `id`. Its event goes to the file manager, which passes it to
--- KOReader's modules and plugins (statistics, cloud storage, ...). Sending it
--- through UIManager would hand it to the top widget, a Kobold screen, which
--- does not handle it. Anything it opens shows above Kobold.
-function KoboldActions.run(id)
+-- ── On / off state ─────────────────────────────────────────────────────────
+-- Some actions toggle something: night mode, the frontlight, Wi-Fi, the
+-- accelerometer. They are told by the event they send; each has a function
+-- that says whether the thing is on now. An action that is not here has no
+-- state (it just does something), unless a plugin says it has one (see state()).
+local STATE = {
+    ToggleNightMode = function()
+        return G_reader_settings:isTrue("night_mode")
+    end,
+    ToggleFrontlight = function()
+        local Device = require("device")
+        local powerd = Device:getPowerDevice()
+        if powerd and type(powerd.isFrontlightOn) == "function" then return powerd:isFrontlightOn() end
+        if powerd and type(powerd.frontlightIntensity) == "function" then
+            return (tonumber(powerd:frontlightIntensity()) or 0) > 0
+        end
+    end,
+    ToggleGSensor = function()
+        return G_reader_settings:nilOrFalse("input_ignore_gsensor")
+    end,
+    ToggleWifi = function()
+        return require("ui/network/manager"):isWifiOn()
+    end,
+}
+
+-- Whether the thing action `id` toggles is on now: true or false; nil when the
+-- action has no on / off state.
+function KoboldActions.state(id)
+    local def = (actionTable() or {})[id]
+    if not (def and def.event) then return nil end
+    local fn = STATE[def.event]
+    if fn then
+        local ok, value = pcall(fn)
+        if ok and value ~= nil then return value and true or false end
+        return nil
+    end
+    -- Toggles that plugins add (FileBrowser Plus, ZenFM, ...): see data/plugins.lua
+    local ok, value = pcall(function()
+        return require("kobold.data.plugins").stateOfEvent(def.event, id)
+    end)
+    if ok and value ~= nil then return value and true or false end
+    return nil
+end
+
+-- Runs action `id`. Its event goes to `ui` (the reader, when it is run from
+-- inside a book) or else to the file manager, which passes it to KOReader's
+-- modules and plugins (statistics, cloud storage, ...). Sending it through
+-- UIManager would hand it to the top widget, a Kobold screen, which does not
+-- handle it. Anything it opens shows above Kobold.
+function KoboldActions.run(id, ui)
     local def = (actionTable() or {})[id]
     -- A book parked under KiKome has no file browser: it is made now.
-    local fm = isSimple(def) and require("kobold.ui.park").fm() or nil
+    local fm = isSimple(def) and (ui or require("kobold.ui.park").fm()) or nil
     if not (isSimple(def) and fm) then
         require("kobold.ui.toast").error(_("This action is not available: ") .. tostring(id))
         return false

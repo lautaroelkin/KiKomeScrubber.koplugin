@@ -11,7 +11,8 @@
 --   Flow.changeTarget(c, on_change)     what it runs
 --   Flow.confirmDelete(c, on_change)
 --   Flow.menu{ screen, anchor, align, action = c, on_change }
---                                        the small menu of holding a tile
+--                                        the small menu of holding a tile (on the
+--                                        Actions chip of Home)
 --
 -- `c` is an action as CustomActions.list() gives it.
 
@@ -180,7 +181,7 @@ end
 function Flow.confirmDelete(c, on_change)
     require("kobold.ui.confirm_sheet").show{
         title = _("Delete this action?"),
-        message = c.name .. "\n" .. _("It is taken out of Actions. What it runs is not changed."),
+        message = c.name .. "\n" .. _("It is deleted for good. What it runs is not changed."),
         confirm_text = _("Delete"),
         on_confirm = function()
             CustomActions.delete(c.id)
@@ -190,11 +191,12 @@ function Flow.confirmDelete(c, on_change)
 end
 
 -- The small menu of holding a tile: Rename, Change icon, Change what it runs,
--- Move earlier / later (when there is room) and Delete.
+-- Move earlier / later (among the tiles Home shows), Hide from Home (the action
+-- stays in Settings > Actions) and Delete.
 function Flow.menu(o)
     local c, on_change = o.action, o.on_change
     local idx, count = nil, 0
-    for i, a in ipairs(CustomActions.list()) do
+    for i, a in ipairs(CustomActions.forChip("actions")) do
         count = i
         if a.id == c.id then idx = i end
     end
@@ -206,12 +208,14 @@ function Flow.menu(o)
     }
     if idx and idx > 1 then
         items[#items + 1] = { text = _("Move earlier"), icon = "chevron-left",
-            action = function() CustomActions.move(c.id, -1); call(on_change) end }
+            action = function() CustomActions.moveIn("actions", c.id, -1, true); call(on_change) end }
     end
     if idx and idx < count then
         items[#items + 1] = { text = _("Move later"), icon = "chevron-right",
-            action = function() CustomActions.move(c.id, 1); call(on_change) end }
+            action = function() CustomActions.moveIn("actions", c.id, 1, true); call(on_change) end }
     end
+    items[#items + 1] = { text = _("Hide from Home"), icon = { "square-minus", "minus" },
+        action = function() CustomActions.setShown("actions", c.id, false); call(on_change) end }
     items[#items + 1] = { text = _("Delete"), icon = "trash-2",
         action = function() Flow.confirmDelete(c, on_change) end }
     require("kobold.ui.book_menu").show{

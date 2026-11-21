@@ -1214,6 +1214,34 @@ function KoboldMyBooks:buildBookRow(item)
     }
 end
 
+-- A collection with no books yet: a light grey tile with the collections icon
+-- (icons/book-marked.svg) in the middle, as the folder tiles of the Files tab
+-- have. It is as tall as a cover of that width (not the whole cell), sitting on
+-- the bottom of the cell like the covers do. The corners follow Settings >
+-- Appearance > Rounded corners (square when it is off), with the covers' radius.
+local function emptyCollectionTile(w, h, cell_h)
+    h = math.min(h, math.floor(w * COVER_RATIO))
+    local radius = Rounded.enabled() and Screen:scaleBySize(10) or 0
+    radius = math.min(radius, math.floor(w / 2), math.floor(h / 2))
+    local icon_size = math.floor(math.min(w, h) * 0.45)
+    local tile = FrameContainer:new{
+        width = w, height = h,
+        bordersize = 0, margin = 0, padding = 0,
+        radius = radius,
+        background = Blitbuffer.Color8(0xDD),
+        CenterContainer:new{
+            dimen = Geom:new{ w = w, h = h },
+            OptionSheet.iconWidget("book-marked", icon_size, Blitbuffer.COLOR_BLACK),
+        },
+    }
+    if not cell_h or cell_h <= h then return tile end
+    return KoboldWidgets.fixed(w, cell_h, VerticalGroup:new{
+        align = "left",
+        VerticalSpan:new{ width = cell_h - h },
+        tile,
+    })
+end
+
 -- One author / series / collection row, the same for all three, as on the
 -- e-reader's series list: the first book's cover (with a small stack of edges
 -- above it when there is more than one book), the name, and the book count at
@@ -1246,11 +1274,8 @@ function KoboldMyBooks:buildSeriesRow(group)
     if first and first.file then
         thumb[#thumb + 1] = Rounded.cover(first.file, cover_w, cover_h)
     else
-        -- a collection with no books yet: a plain grey block, as in the grid
-        thumb[#thumb + 1] = KoboldWidgets.fixed(cover_w, cover_h, LineWidget:new{
-            dimen = Geom:new{ w = cover_w, h = cover_h },
-            background = Blitbuffer.Color8(0xDD),
-        })
+        -- a collection with no books yet: the grey tile with its icon, as in the grid
+        thumb[#thumb + 1] = emptyCollectionTile(cover_w, cover_h)
     end
 
     -- Authors of a series: the first book's, which the others share in
@@ -1523,11 +1548,8 @@ function KoboldMyBooks:buildGrid()
                         Rounded.cover(file, L.grid_cell_w, L.grid_cover_h),
                     })
                 else
-                    -- a collection with no books yet: a plain grey block
-                    cover = KoboldWidgets.fixed(L.grid_cell_w, L.grid_cover_h, LineWidget:new{
-                        dimen = Geom:new{ w = L.grid_cell_w, h = L.grid_cover_h },
-                        background = Blitbuffer.Color8(0xDD),
-                    })
+                    -- a collection with no books yet: the grey tile with its icon
+                    cover = emptyCollectionTile(L.grid_cell_w, L.grid_cover_h, L.grid_cover_h)
                 end
                 if item.is_dir then
                     row[#row + 1] = self:buildFolderTile(item)

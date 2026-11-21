@@ -1,5 +1,5 @@
 -- kobold/ui/rounded.lua — Kobold
--- Rounded corners for covers. The option lives in Settings > Home > Rounded
+-- Rounded corners for covers. The option lives in Settings > Appearance > Rounded
 -- corners and is on by default. Off means every cover keeps square corners.
 --
 --   Rounded.enabled()             the current setting

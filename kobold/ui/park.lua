@@ -127,6 +127,9 @@ end
 -- current screen size (after a rotation the normal close rebuilds it).
 function Park.canPark(rui)
     if not Park.enabled() then return false end
+    -- Memory is short: the book is closed for real, as without parking, so the
+    -- next one finds the memory free (see data/memory.lua).
+    if not require("kobold.data.memory").canPark() then return false end
     if not (rui and rui.document) then return false end
     if Park.isParked() then return false end
     local screen = KoboldSession.parkedScreen()
@@ -145,6 +148,8 @@ local function refreshScreen(screen, rui, file)
             rui.doc_settings:readSetting("percent_finished"))
     end)
     UIManager:forceRePaint()
+    -- the covers get their normal memory budget back
+    require("kobold.data.memory").afterReader()
     if screen and screen.onKoboldReturn then pcall(function() screen:onKoboldReturn() end) end
 end
 
@@ -273,6 +278,8 @@ local function finishCore(reason)
         end
     end
     UIManager:nextTick(function() _finishing = false end)
+    -- the book is gone: its garbage is collected now, while nobody is reading
+    pcall(function() require("kobold.data.memory").collect() end)
     logger.dbg("[kobold park] finished:", reason)
     return true
 end

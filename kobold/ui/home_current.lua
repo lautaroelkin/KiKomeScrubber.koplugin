@@ -20,7 +20,14 @@
 -- colour (data/cover_color.lua).
 --
 -- HomeCurrent.build{ ... } returns the widget and the rects (screen
--- coordinates) of the cover and the three pills, for home.lua's taps.
+-- coordinates) of the cover and the three pills, for home.lua's taps. With
+-- o.read_only (the first tab of KOReader's menu, see menu_tab.lua) there is
+-- only the first pill, and no hits.annot / hits.edit. With o.info_only (inside the
+-- book itself) the first pill has no play icon (you are there already): just the time
+-- left in the chapter, when it is known. With o.extra = { text }
+-- there is one more item at the right end of that row, plain italic text with an icon
+-- after it, no pill (the menu's Hide / Show button): hits.extra. With o.details there is a round button with the notepad
+-- icon right after the first pill (or its plain line): hits.details.
 
 local Blitbuffer      = require("ffi/blitbuffer")
 local CenterContainer = require("ui/widget/container/centercontainer")
@@ -210,7 +217,9 @@ function HomeCurrent.build(o)
     local button_h = U(40)
     local button_gap = U(8)
     local info_btn_gap = U(10)
-    local avail = H - button_h - info_btn_gap
+    -- the row under the text: the first pill (or, inside the book, its plain line) and the extra pill
+    local has_row = (not o.info_only) or (o.extra ~= nil) or (o.details ~= nil)
+    local avail = H - (has_row and (button_h + info_btn_gap) or 0)
     local VARIANTS = {
         { series = true,  title_lines = 2, authors = true },
         { series = false, title_lines = 2, authors = true },
@@ -228,53 +237,125 @@ function HomeCurrent.build(o)
     local round_w = button_h
     -- The first pill is the same colour as the round ones, so the row does not weigh as
     -- much as the chips above it. It is only as wide as its text (icon + label +
-    -- padding), never wider than what is left once the two round buttons have
-    -- theirs; the round buttons follow right after it.
-    local max_read_w = text_w - 2 * (round_w + button_gap)
+    -- padding), never wider than what is left once the extra pill (and, if there, the two
+    -- round buttons) have theirs.
     local icon_sz = U(18)
     local read_pad = U(14)
-    local label_text = leftText(o)
-    local read_label = TextWidget:new{
-        text = label_text, face = KoboldWidgets.face(17), fgcolor = BLACK,
-        max_width = math.max(U(40), max_read_w - 2 * read_pad - icon_sz - U(8)),
-    }
-    local read_w = math.min(max_read_w, read_label:getSize().w + icon_sz + U(8) + 2 * read_pad)
-    -- On a colour screen the three pills take a pale shade of the cover's colour.
+    -- On a colour screen the pills take a pale shade of the cover's colour.
     local pill_color = CoverColor.pill(file) or SOFT
-    local read_button = pill(read_w, button_h, pill_color, HorizontalGroup:new{
-        align = "center",
-        OptionSheet.iconWidget("play", icon_sz, BLACK),
-        HorizontalSpan:new{ width = U(8) },
-        read_label,
-    })
-    local annot_button = pill(round_w, button_h, pill_color, OptionSheet.iconWidget("bookmark", icon_sz, BLACK))
-    local edit_button = pill(round_w, button_h, pill_color, OptionSheet.iconWidget("pencil", icon_sz, BLACK))
+
+    -- the item at the right end of the row: italic text and a small icon, no pill
+    local extra_button, extra_w
+    if o.extra then
+        local ok, italic = pcall(function() return require("ui/font"):getFace("NotoSans-Italic.ttf", 15) end)
+        local extra_label = TextWidget:new{
+            text = o.extra.text, face = (ok and italic) or KoboldWidgets.face(14), fgcolor = BLACK,
+            max_width = math.floor(text_w * 0.4),
+        }
+        extra_button = HorizontalGroup:new{ align = "center", extra_label }
+        if o.extra.icon then
+            extra_button[#extra_button + 1] = HorizontalSpan:new{ width = U(8) }
+            extra_button[#extra_button + 1] = OptionSheet.iconWidget(o.extra.icon, U(18), BLACK)
+        end
+        extra_w = extra_button:getSize().w
+    end
+    local details_w = o.details and (round_w + button_gap) or 0
+    local reserve = (extra_w and (extra_w + button_gap) or 0) + details_w
+    local max_read_w = (o.read_only and text_w or (text_w - 2 * (round_w + button_gap))) - reserve
+
+    local read_button, read_w
+    if not o.info_only then
+        local read_label = TextWidget:new{
+            text = leftText(o), face = KoboldWidgets.face(17), fgcolor = BLACK,
+            max_width = math.max(U(40), max_read_w - 2 * read_pad - icon_sz - U(8)),
+        }
+        read_w = math.min(max_read_w, read_label:getSize().w + icon_sz + U(8) + 2 * read_pad)
+        read_button = pill(read_w, button_h, pill_color, HorizontalGroup:new{
+            align = "center",
+            OptionSheet.iconWidget("play", icon_sz, BLACK),
+            HorizontalSpan:new{ width = U(8) },
+            read_label,
+        })
+    else
+        -- inside the book: the time left, when it is known, in the same pill but with no
+        -- play icon (it does nothing here; the pill only keeps the row looking as it does on Home)
+        local left_line, has_time = leftText(o)
+        if has_time then
+            local left_label = TextWidget:new{
+                text = left_line, face = KoboldWidgets.face(17), fgcolor = BLACK,
+                max_width = math.max(U(40), max_read_w - 2 * read_pad),
+            }
+            read_w = math.min(max_read_w, left_label:getSize().w + 2 * read_pad)
+            read_button = pill(read_w, button_h, pill_color, left_label)
+        end
+    end
+    local annot_button, edit_button
+    if not o.read_only then
+        annot_button = pill(round_w, button_h, pill_color, OptionSheet.iconWidget("bookmark", icon_sz, BLACK))
+        edit_button = pill(round_w, button_h, pill_color, OptionSheet.iconWidget("pencil", icon_sz, BLACK))
+    end
+
+    -- the round button that opens the book's details
+    local details_button
+    if o.details then
+        details_button = pill(round_w, button_h, pill_color, OptionSheet.iconWidget("notepad-text", icon_sz, BLACK))
+    end
+
+    -- the row: what goes on the left, then the details button, then the extra pill at the right end
+    local row, left_w, details_x
+    if has_row then
+        row = HorizontalGroup:new{ align = "center" }
+        if read_button then
+            if o.read_only then
+                row[#row + 1] = read_button
+                left_w = read_w
+            else
+                row[#row + 1] = read_button
+                row[#row + 1] = HorizontalSpan:new{ width = button_gap }
+                row[#row + 1] = annot_button
+                row[#row + 1] = HorizontalSpan:new{ width = button_gap }
+                row[#row + 1] = edit_button
+                left_w = read_w + 2 * (button_gap + round_w)
+            end
+        end
+        if details_button then
+            if left_w and left_w > 0 then
+                row[#row + 1] = HorizontalSpan:new{ width = button_gap }
+                left_w = left_w + button_gap
+            end
+            details_x = left_w or 0
+            row[#row + 1] = details_button
+            left_w = (left_w or 0) + round_w
+        end
+        if extra_button then
+            row[#row + 1] = HorizontalSpan:new{ width = math.max(0, text_w - (left_w or 0) - extra_w) }
+            row[#row + 1] = extra_button
+        end
+    end
 
     -- The text and the pills are one block, centred on the card.
-    local block_h = info_h + info_btn_gap + button_h
+    local block_h = info_h + (has_row and (info_btn_gap + button_h) or 0)
     local top_off = math.max(0, math.floor((H - block_h) / 2))
     local right_x = o.x + cover_w + gap_h
     local buttons_y = o.y + top_off + info_h + info_btn_gap
     local hits = {
         cover = Geom:new{ x = o.x, y = o.y + cover_off, w = csw, h = csh },
-        read  = Geom:new{ x = right_x, y = buttons_y, w = read_w, h = button_h },
-        annot = Geom:new{ x = right_x + read_w + button_gap, y = buttons_y, w = round_w, h = button_h },
-        edit  = Geom:new{ x = right_x + read_w + 2 * button_gap + round_w, y = buttons_y, w = round_w, h = button_h },
+        read  = read_button and Geom:new{ x = right_x, y = buttons_y, w = read_w, h = button_h } or nil,
+        annot = (not o.read_only) and Geom:new{ x = right_x + read_w + button_gap, y = buttons_y, w = round_w, h = button_h } or nil,
+        edit  = (not o.read_only) and Geom:new{ x = right_x + read_w + 2 * button_gap + round_w, y = buttons_y, w = round_w, h = button_h } or nil,
+        extra = extra_button and Geom:new{ x = right_x + text_w - extra_w - U(8), y = buttons_y, w = extra_w + U(8), h = button_h } or nil,
+        details = details_button and Geom:new{ x = right_x + (details_x or 0), y = buttons_y, w = round_w, h = button_h } or nil,
     }
 
     local right = VerticalGroup:new{
         align = "left",
         VerticalSpan:new{ width = top_off },
         info_col,
-        VerticalSpan:new{ width = info_btn_gap },
-        HorizontalGroup:new{
-            read_button,
-            HorizontalSpan:new{ width = button_gap },
-            annot_button,
-            HorizontalSpan:new{ width = button_gap },
-            edit_button,
-        },
     }
+    if row then
+        right[#right + 1] = VerticalSpan:new{ width = info_btn_gap }
+        right[#right + 1] = row
+    end
     -- The cover, with the "Opening" pill over it while the book opens.
     local cover = OverlapGroup:new{
         dimen = Geom:new{ w = cover_w, h = cover_h },

@@ -25,6 +25,7 @@ local KoboldPrefs     = require("kobold.data.prefs")
 local Rounded        = require("kobold.ui.rounded")
 local CoverBadge     = require("kobold.ui.cover_badge")
 local Chips          = require("kobold.data.chips")
+local CustomActions  = require("kobold.data.custom_actions")
 local KoboldNav       = require("kobold.ui.nav")
 local KoboldMetrics   = require("kobold.ui.metrics")
 local KoboldReader    = require("kobold.ui.reader")
@@ -85,10 +86,35 @@ function ClipRow:free()
     if self.child and self.child.free then self.child:free() end
 end
 
+function KoboldHome:activeTopModes()
+    local enabled = KoboldPrefs.homeTopEnabled()
+    local current = self.data and self.data.reading and self.data.reading[1]
+    local modes = {}
+    for _i, id in ipairs(enabled) do
+        if id ~= "current" or (current and current.file) then
+            modes[#modes + 1] = id
+        end
+    end
+    if #modes == 0 then modes[1] = "recent" end
+    return modes
+end
+
+function KoboldHome:setTopIndex(idx)
+    local modes = self:activeTopModes()
+    if #modes <= 1 then return false end
+    idx = math.max(1, math.min(#modes, idx))
+    if idx == (self.top_index or 1) then return false end
+    self.top_index = idx
+    self:build()
+    UIManager:setDirty(self, "ui")
+    return true
+end
+
 function KoboldHome:init()
     local W, H = Screen:getWidth(), Screen:getHeight()
     self.dimen = Geom:new{ x = 0, y = 0, w = W, h = H }
     self.reading_page = 1
+    self.top_index = 1
     if Device:isTouchDevice() then
         self.ges_events = self.ges_events or {}
         self.ges_events.SwipeCovers = {
@@ -178,12 +204,17 @@ function KoboldHome:paintTo(bb, x, y)
     if self.chips_sig ~= nil and Chips.signature() ~= self.chips_sig then
         self:build()
     end
-    -- A font was changed in Settings > Fonts.
+    -- The actions were changed in Settings > Your actions (or which ones Home shows).
+    if self.actions_sig ~= nil and CustomActions.signature() ~= self.actions_sig then
+        self:build()
+    end
+    -- A font was changed in Settings > Appearance > Fonts.
     if self.font_sig ~= nil and KoboldFonts.signature() ~= self.font_sig then
         self:build()
     end
-    -- Settings > Home > Top of Home: the recent books row, the current book card or the clock.
-    if self.top_pref ~= nil and KoboldPrefs.get("home_top") ~= self.top_pref then
+    -- Settings > Home > Top of Home: ordered toggles (first enabled is the default).
+    if self.top_sig ~= nil and KoboldPrefs.homeTopSignature() ~= self.top_sig then
+        self.top_index = 1
         self:build()
     end
     -- The Clock card: the font changed in Settings, the minute turned while Home was
@@ -264,9 +295,21 @@ function KoboldHome:build()
     -- All Top of Home modes share the exact same height (`read_h`) so the
     -- shelves below never shift when switching modes.
     local current = data.reading and data.reading[1]
-    local top_mode = KoboldPrefs.get("home_top")
+    local modes = self:activeTopModes()
+    self.top_index = math.min(math.max(self.top_index or 1, 1), #modes)
+    local top_mode = modes[self.top_index]
     local clock_mode = top_mode == "clock"
     local card_mode = top_mode == "current" and current and current.file
+    if #modes > 1 then
+        self._kobold_top_dots = {
+            count = #modes,
+            current = self.top_index,
+            on_select = function(idx) self:setTopIndex(idx) end,
+            on_swipe = function(dir) self:setTopIndex((self.top_index or 1) + dir) end,
+        }
+    else
+        self._kobold_top_dots = nil
+    end
 
     local y_read  = margin_top + status_h + status_gap
     local y_lib   = y_read + read_h + shelf_gap
@@ -302,11 +345,12 @@ function KoboldHome:build()
     self.status_minute = math.floor(os.time() / 60)
     self.outline_w = KoboldWidgets.outlineWidth()
     self.chips_sig = Chips.signature()
+    self.actions_sig = CustomActions.signature()
     self.font_sig = KoboldFonts.signature()
 
     -- The top: the row of recent books, or (Settings > Home > Top of Home) one
     -- card with the book being read, or the clock. With no book read yet, the row stays.
-    self.top_pref = top_mode
+    self.top_sig = KoboldPrefs.homeTopSignature()
     self.card_hits, self.card_file = nil, nil
     -- Whatever the clock card had (and its minute tick) goes: it is made again below if it is on.
     self:cancelClock()
@@ -443,6 +487,16 @@ local function readState(item)
     local pct = tonumber(info.percent) or tonumber(item.percent)
     if info.status == "abandoned" then return pct, false, true end   -- On hold
     if info.status == "complete" or (pct and pct >= 1) then return 1, true end
+    local ReaderUI = package.loaded["apps/reader/readerui"]
+    local rui = ReaderUI and ReaderUI.instance
+    if rui and rui.document and rui.document.file == item.file then
+        pcall(function()
+            local mod = rui.rolling or rui.paging
+            local live = mod and mod.getLastPercent and mod:getLastPercent()
+            if tonumber(live) then pct = tonumber(live) end
+        end)
+        if pct and pct >= 1 then return 1, true end
+    end
     if pct and pct > 0 then return pct, false end
     return nil, false
 end
@@ -456,26 +510,36 @@ function KoboldHome:buildCurrentCard(item, L)
     info = (ok and type(info) == "table") and info or {}
     local ok_m, meta = pcall(LibraryShelf.bookMeta, item.file)
     meta = (ok_m and type(meta) == "table") and meta or {}
-    -- Minutes left in the chapter: what the reader kept in the sidecar when it
-    -- last saved the book, at this reading speed. nil when anything is missing.
+    -- Minutes left in the chapter: same logic as menu_tab.lua
     local minutes, left_text
     pcall(function()
-        local snap = info.chapter_left
-        if type(snap) ~= "table" then return end
-        -- the reader's own figure (snap.seconds) needs nothing else; without it,
-        -- the book's reading speed from the statistics database
-        local rate
-        if not snap.seconds and info.md5 then
-            rate = require("kobold.data.stats").secondsPerPage({ info.md5 })[info.md5]
-        end
         local ChapterLeft = require("kobold.data.chapter_left")
-        minutes = ChapterLeft.minutes(snap, pct, info.pages, rate)
-        -- the time as the reader wrote it, when it could not be read as minutes
-        if not minutes then left_text = ChapterLeft.text(snap, pct) end
+        local ReaderUI = package.loaded["apps/reader/readerui"]
+        local rui = ReaderUI and ReaderUI.instance
+        if rui and rui.document and rui.document.file == item.file then
+            local snap = ChapterLeft.snapshot(rui)
+            if snap then
+                if tonumber(snap.seconds) then
+                    minutes = tonumber(snap.seconds) / 60
+                end
+                if not minutes and type(snap.text) == "string" and snap.text ~= "" then
+                    left_text = snap.text
+                end
+            end
+        end
+        if not minutes and not left_text then
+            local snap = info.chapter_left
+            if type(snap) ~= "table" then return end
+            local pages_count = tonumber(info.pages) or tonumber(item.pages)
+            -- Only the time the reader measured and kept (the figure KOReader's statistics
+            -- gave for those pages, the same one shown inside the book). With none, or when
+            -- the book has moved since, nothing is guessed: the card says "Read now".
+            minutes = ChapterLeft.minutes(snap, pct, pages_count, nil)
+            if not minutes then left_text = ChapterLeft.text(snap, pct) end
+        end
     end)
     -- The pages of "Page X of Y": the same count as Book details (the Metadata count or KOReader's
-    -- stable pages, when the book has them); otherwise the layout's, as before. The minutes left
-    -- above keep the layout's pages: the reading speed is measured per page of the layout.
+    -- stable pages, when the book has them); otherwise the layout's, as before.
     local card_pages = tonumber(info.pages) or tonumber(item.pages)
     local ok_p, shown = pcall(function() return require("kobold.data.stable_pages").shown(item.file) end)
     if ok_p and tonumber(shown) then card_pages = tonumber(shown) end
@@ -559,7 +623,7 @@ function KoboldHome:refreshStatusClock()
     self.status_minute = minute
     local s = self._kobold_status
     if s and s.frame then
-        local ok, bar = pcall(KoboldWidgets.statusBar, s.dimen.w)
+        local ok, bar = pcall(KoboldWidgets.statusBar, s.dimen.w, self._kobold_top_dots)
         if ok and bar then s.frame[1] = bar end
     end
 end
@@ -605,6 +669,9 @@ function KoboldHome:onClockTick()
             return "ui", Geom:new{ x = x0, y = y0, w = x1 - x0, h = c.y + c.h - y0 }
         end)
     end
+    -- Not on top (a book, a menu): no more wakeups every minute for a card
+    -- nobody sees. paintTo starts the tick again when Home is painted.
+    if top ~= self then return end
     self:scheduleClock()
 end
 
@@ -665,18 +732,31 @@ end
 function KoboldHome:onSwipeCovers(_, ges)
     if self.reading_rect and ges.pos:intersectWith(self.reading_rect) then
         local total = self.reading_pages or 1
-        if ges.direction == "west" and self.reading_page < total then
-            self.reading_page = self.reading_page + 1
-            self:build()
-            UIManager:setDirty(self, "ui")
-        elseif ges.direction == "east" and self.reading_page > 1 then
-            self.reading_page = self.reading_page - 1
-            self:build()
-            UIManager:setDirty(self, "ui")
+        if ges.direction == "west" then
+            if self.reading_page < total then
+                self.reading_page = self.reading_page + 1
+                self:build()
+                UIManager:setDirty(self, "ui")
+            else
+                self:setTopIndex((self.top_index or 1) + 1)
+            end
+        elseif ges.direction == "east" then
+            if self.reading_page > 1 then
+                self.reading_page = self.reading_page - 1
+                self:build()
+                UIManager:setDirty(self, "ui")
+            else
+                self:setTopIndex((self.top_index or 1) - 1)
+            end
         end
         return true
     end
     if self.top_rect and ges.pos:intersectWith(self.top_rect) then
+        if ges.direction == "west" then
+            self:setTopIndex((self.top_index or 1) + 1)
+        elseif ges.direction == "east" then
+            self:setTopIndex((self.top_index or 1) - 1)
+        end
         return true
     end
     return false

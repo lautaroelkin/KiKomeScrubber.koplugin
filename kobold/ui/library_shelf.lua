@@ -308,8 +308,10 @@ function Chip:free() if self.label then self.label:free() end end
 
 -- The tile of a custom action (Actions chip): a rounded grey square with the
 -- action's icon in the middle, or, for the "+" that adds one, a white square
--- with a thin outline. `icon` is a ready widget.
-local ActionTile = Widget:extend{ size = 0, icon = nil, add = false }
+-- with a thin outline. `icon` is a ready widget. `on`: true when what the action
+-- toggles (night mode, the frontlight, Wi-Fi...) is on: the tile is black with a
+-- white icon; off, or an action with no such state (nil), it is grey.
+local ActionTile = Widget:extend{ size = 0, icon = nil, add = false, on = nil }
 
 function ActionTile:getSize() return Geom:new{ w = self.size, h = self.size } end
 
@@ -322,11 +324,19 @@ function ActionTile:paintTo(bb, x, y)
         bb:paintRoundedRect(x + line, y + line, self.size - 2 * line, self.size - 2 * line,
             WHITE, math.max(1, radius - line))
     else
-        bb:paintRoundedRect(x, y, self.size, self.size, C_TAG, radius)
+        bb:paintRoundedRect(x, y, self.size, self.size, (self.on == true) and BLACK or C_TAG, radius)
     end
     if self.icon then
         local isz = self.icon:getSize()
-        self.icon:paintTo(bb, x + math.floor((self.size - isz.w) / 2), y + math.floor((self.size - isz.h) / 2))
+        local ix, iy = x + math.floor((self.size - isz.w) / 2), y + math.floor((self.size - isz.h) / 2)
+        if self.on == true and not self.add then
+            -- white icon on black: drawn black on white, then inverted
+            bb:paintRect(ix, iy, isz.w, isz.h, WHITE)
+            self.icon:paintTo(bb, ix, iy)
+            bb:invertRect(ix, iy, isz.w, isz.h)
+        else
+            self.icon:paintTo(bb, ix, iy)
+        end
     end
 end
 
@@ -1272,7 +1282,11 @@ end
 
 -- An empty book: a plain grey cover. A folder stack always shows two books,
 -- and these stand where the folder has fewer, instead of leaving a gap.
-local EmptyBook = Widget:extend{ width = 0, height = 0 }
+-- It follows Settings > Appearance: square corners when Rounded corners is off,
+-- no outline when Cover outline is off. `icon` (a name, e.g. "book-marked" for
+-- a collection or "folder" for a folder) draws that icon in the middle, as the
+-- folder tiles of the Files tab do; it is only given to a stack with no book.
+local EmptyBook = Widget:extend{ width = 0, height = 0, icon = nil }
 
 function EmptyBook:getSize()
     return Geom:new{ w = self.width, h = self.height }
@@ -1280,14 +1294,39 @@ end
 
 function EmptyBook:paintTo(bb, x, y)
     self.dimen = Geom:new{ x = x, y = y, w = self.width, h = self.height }
-    local radius = math.max(2, U(4))
-    local line = math.max(1, U(1))
-    bb:paintRoundedRect(x, y, self.width, self.height, C_OUTLINE, radius)
-    bb:paintRoundedRect(x + line, y + line, self.width - 2 * line, self.height - 2 * line,
-        C_TRACK, math.max(1, radius - line))
+    local radius = Rounded.enabled() and math.max(2, U(10)) or 0
+    radius = math.min(radius, math.floor(self.width / 2), math.floor(self.height / 2))
+    local line = KoboldWidgets.outlineWidth({ outline = true })
+    local function box(bx, by, bw, bh, color, r)
+        if r >= 2 then
+            bb:paintRoundedRect(bx, by, bw, bh, color, r)
+        else
+            bb:paintRect(bx, by, bw, bh, color)
+        end
+    end
+    if line > 0 then
+        box(x, y, self.width, self.height, C_OUTLINE, radius)
+        box(x + line, y + line, self.width - 2 * line, self.height - 2 * line,
+            C_TRACK, math.max(0, radius - line))
+    else
+        box(x, y, self.width, self.height, C_TRACK, radius)
+    end
+    if self.icon then
+        if not self.icon_widget then
+            local size = math.floor(math.min(self.width, self.height) * 0.45)
+            self.icon_widget = iconWidget(self.icon, size, BLACK)
+        end
+        local isz = self.icon_widget:getSize()
+        self.icon_widget:paintTo(bb,
+            x + math.floor((self.width - isz.w) / 2),
+            y + math.floor((self.height - isz.h) / 2))
+    end
 end
 
-function EmptyBook:free() end
+function EmptyBook:free()
+    if self.icon_widget and self.icon_widget.free then self.icon_widget:free() end
+    self.icon_widget = nil
+end
 
 -- A cover lying down: the finished cover turned 90 degrees clockwise, as if
 -- the book had fallen to the right. It reports the lying size (w x h).
@@ -1344,10 +1383,17 @@ local function titlePill(name, count, cell_w, cell_h, center_x)
     return CoverBadge.titlePill(flipArticle(name), count, cell_w, cell_h, center_x)
 end
 
+-- The icon an empty stack shows: a folder's own icon, or the collections icon.
+local function cardIcon(group)
+    return group.path and "folder" or "book-marked"
+end
+
 -- `lying`: a folder with one single book shows it lying down, as wide as the
 -- stack of covers a folder with several books draws.
 -- `title`: the name to show in a pill on the card (grid); nil in the list.
-local function makeCard(files, cell_w, cell_h, lying, title)
+-- `icon`: icon for the front cover when there is no book at all (an empty
+-- collection or folder): "book-marked" or "folder".
+local function makeCard(files, cell_w, cell_h, lying, title, icon)
     -- Two books: one in front and a smaller one behind it, peeking out to the
     -- right (a third one was too small to be of any use).
     local spec = { { 0.62, 0 }, { 0.42, 0.56 } }
@@ -1381,7 +1427,10 @@ local function makeCard(files, cell_w, cell_h, lying, title)
             cover = Rounded.cover(files[k], bw, bh, { outline = true })
         else
             sh = bh
-            cover = EmptyBook:new{ width = bw, height = bh }
+            cover = EmptyBook:new{
+                width = bw, height = bh,
+                icon = (k == 1 and #files == 0) and icon or nil,
+            }
         end
         -- never past the card's right edge, so nothing of it is cut off
         local cx = math.min(math.floor(cell_w * spec[k][2]), math.max(0, cell_w - bw))
@@ -1633,7 +1682,7 @@ function LibraryShelf:buildShelves(entries, avail)
                 local h1 = math.floor(bw * COVER_RATIO)
                 self.page_items[slot], self.page_kinds[slot] = e.data, "cards"
                 self.item_rects[slot] = { x = x, y = y + top_gap + r.cell_h - h1, w = w, h = h1 }
-                cells[#cells + 1] = makeCard(files, w, r.cell_h, nil, e.data.name)
+                cells[#cells + 1] = makeCard(files, w, r.cell_h, nil, e.data.name, cardIcon(e.data))
             elseif e.kind == "book" then
                 local sw, sh = KoboldWidgets.coverBox(e.data, w, m.book.h)
                 sw = math.min(sw or w, w)
@@ -1679,7 +1728,7 @@ function LibraryShelf:buildShelves(entries, avail)
                 if item.add then
                     tile = ActionTile:new{ size = w, add = true, icon = iconWidget("plus", icon_size, C_SECONDARY) }
                 else
-                    tile = ActionTile:new{ size = w, icon = ActionIcon.widget(item.icon, icon_size) }
+                    tile = ActionTile:new{ size = w, icon = ActionIcon.widget(item.icon, icon_size), on = CustomActions.state(item) }
                 end
                 local label = TextBoxWidget:new{
                     text = item.add and _("Add") or item.name, face = face, width = w,
@@ -1782,7 +1831,7 @@ function LibraryShelf:buildList(entries, avail)
         local thumb, texts, thumb_box
         if e.kind == "card" then
             local count = #e.data.files
-            thumb = makeCard(e.data.files, card_w, thumb_h)
+            thumb = makeCard(e.data.files, card_w, thumb_h, nil, nil, cardIcon(e.data))
             texts = VerticalGroup:new{
                 align = "left",
                 titleWidget(flipArticle(e.data.name), card_text_w),
@@ -1800,7 +1849,7 @@ function LibraryShelf:buildList(entries, avail)
             if item.add then
                 tile = ActionTile:new{ size = side, add = true, icon = iconWidget("plus", icon_size, C_SECONDARY) }
             else
-                tile = ActionTile:new{ size = side, icon = ActionIcon.widget(item.icon, icon_size) }
+                tile = ActionTile:new{ size = side, icon = ActionIcon.widget(item.icon, icon_size), on = CustomActions.state(item) }
             end
             texts = VerticalGroup:new{
                 align = "left",
@@ -2262,6 +2311,34 @@ end
 function LibraryShelf:actionsChanged()
     local shelf = (self.home and self.home.library_shelf) or self
     shelf:rebuild()
+    -- Home has now seen this change: it need not build itself again for it.
+    if self.home then self.home.actions_sig = CustomActions.signature() end
+end
+
+-- The state (on / off / none) of every tile, as one string: it changes when a tile
+-- has to be drawn again.
+local function actionStates()
+    local parts = {}
+    for _i, c in ipairs(CustomActions.forChip("actions")) do
+        local on = CustomActions.state(c)
+        parts[#parts + 1] = c.id .. (on == nil and "-" or (on and "1" or "0"))
+    end
+    return table.concat(parts, ",")
+end
+
+-- After an action that switches something, the tiles look again a few times (Wi-Fi
+-- takes seconds to come on) and the shelf is drawn again only if one changed.
+function LibraryShelf:followActionState(before)
+    local function look()
+        local now = actionStates()
+        if now ~= before then
+            before = now
+            self:actionsChanged()
+        end
+    end
+    UIManager:scheduleIn(0.3, look)
+    UIManager:scheduleIn(1.5, look)
+    UIManager:scheduleIn(4, look)
 end
 
 -- A tile was tapped: the "+" starts a new action, any other runs its action.
@@ -2269,7 +2346,9 @@ function LibraryShelf:tapAction(item)
     if item.add then
         require("kobold.ui.action_flow").add(function() self:actionsChanged() end)
     else
+        local before = actionStates()
         CustomActions.run(item.id)
+        if CustomActions.state(item) ~= nil then self:followActionState(before) end
     end
 end
 

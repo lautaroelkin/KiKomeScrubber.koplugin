@@ -51,6 +51,19 @@ function KoboldSession.dropParked()
     if pending then pending.screen = nil end
 end
 
+-- Like dropParked, for a screen hidden under the reader that is let go to free
+-- memory (data/memory.lua): marked invisible first, so that closing it does not
+-- ask for a refresh of the screen while the book is on it. The record of where
+-- to return stays: closing the book builds that tab again.
+function KoboldSession.dropParkedQuiet()
+    local w = pending and pending.screen
+    if w and inStack(w) then
+        pcall(function() w.invisible = true end)
+        UIManager:close(w)
+    end
+    if pending then pending.screen = nil end
+end
+
 -- The screen parked under the reader, when it is still in the window stack.
 function KoboldSession.parkedScreen()
     local w = pending and pending.screen

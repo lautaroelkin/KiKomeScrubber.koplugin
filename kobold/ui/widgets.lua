@@ -42,7 +42,7 @@ function KoboldWidgets.fixed(w, h, child)
     }
 end
 
--- The plugin has two fonts (Settings > Fonts; KOReader's own font until one is
+-- The plugin has two fonts (Settings > Appearance > Fonts; KOReader's own font until one is
 -- chosen, see data/fonts.lua). Every text asks for one of these two faces:
 --
 --   face(size)           PRIMARY: most of the text. Titles, names, rows, menus,
@@ -737,10 +737,35 @@ local function clockWidget(max_w)
     return group
 end
 
+-- Page indicator dots in the center of the status bar (same geometry as Action center).
+local StatusDots = Widget:extend{ count = 2, current = 1 }
+
+function StatusDots:init()
+    self.d = Screen:scaleBySize(7)
+    self.gap = Screen:scaleBySize(9)
+    self.dimen = Geom:new{ x = 0, y = 0, w = self.count * self.d + (self.count - 1) * self.gap, h = self.d }
+end
+
+function StatusDots:getSize()
+    return self.dimen
+end
+
+function StatusDots:paintTo(bb, x, y)
+    self.dimen.x, self.dimen.y = x, y
+    local off_color = Blitbuffer.Color8(0xDD)
+    local r = math.floor(self.d / 2)
+    for i = 1, self.count do
+        bb:paintRoundedRect(x + (i - 1) * (self.d + self.gap), y, self.d, self.d,
+            (i == self.current) and Blitbuffer.COLOR_BLACK or off_color, r)
+    end
+end
+
+function StatusDots:free() end
+
 -- Shared top status bar: the clock on the left (time, or time and date, as
--- chosen in Settings), then contrast, Wi-Fi, battery and search icons on the
--- right.
-function KoboldWidgets.statusBar(content_w)
+-- chosen in Settings), optional centered page dots, then contrast, Wi-Fi,
+-- battery and search icons on the right.
+function KoboldWidgets.statusBar(content_w, dots_cfg)
     local widths, size, gap, style, battery_icon = statusIconWidths()
     local icons = HorizontalGroup:new{
         align = "center",
@@ -752,14 +777,35 @@ function KoboldWidgets.statusBar(content_w)
         HorizontalSpan:new{ width = gap },
         KoboldWidgets.customIcon("search", size, KoboldWidgets.hasIcon("lookup.search") and "lookup.search" or "appbar.search"),
     }
+    local icons_w = icons:getSize().w
+    if dots_cfg and (dots_cfg.count or 0) > 1 then
+        local dots = StatusDots:new{ count = dots_cfg.count, current = dots_cfg.current or 1 }
+        local dots_w = dots:getSize().w
+        local min_gap = Screen:scaleBySize(8)
+        local max_dots_x = math.max(0, content_w - icons_w - min_gap - dots_w)
+        local dots_x = math.min(math.floor((content_w - dots_w) / 2), max_dots_x)
+        local clock_max = math.max(0, dots_x - min_gap)
+        local clock = clockWidget(clock_max)
+        local clock_w = clock:getSize().w
+        local left_span = math.max(0, dots_x - clock_w)
+        local right_span = math.max(0, content_w - dots_x - dots_w - icons_w)
+        return HorizontalGroup:new{
+            align = "center",
+            clock,
+            HorizontalSpan:new{ width = left_span },
+            dots,
+            HorizontalSpan:new{ width = right_span },
+            icons,
+        }, { x = dots_x, w = dots_w, count = dots_cfg.count }
+    end
     local clock = clockWidget(clockMaxWidth(content_w))
-    local spacer = content_w - clock:getSize().w - icons:getSize().w
+    local spacer = content_w - clock:getSize().w - icons_w
     return HorizontalGroup:new{
         align = "center",
         clock,
         HorizontalSpan:new{ width = math.max(spacer, 0) },
         icons,
-    }
+    }, nil
 end
 
 -- Left edge and width of status bar icon `index` (1 = contrast ... 4 =
@@ -786,11 +832,12 @@ end
 
 -- The clock's tap zone (popup with the time and the full date) and its
 -- long-press zone (debug screenshot): the left third of the bar, or all of the
--- clock when its text is wider than that, and never over the icons. The text
--- changes with the layout chosen in Settings, so refreshStatusBar calls this
--- again each time the bar is drawn.
-local function registerClockZones(screen, margin, top, content_w, status_h)
+-- clock when its text is wider than that, and never over the icons or center dots.
+local function registerClockZones(screen, margin, top, content_w, status_h, dots_info)
     local clock_max = clockMaxWidth(content_w)
+    if dots_info then
+        clock_max = math.min(clock_max, math.max(0, dots_info.x - Screen:scaleBySize(8)))
+    end
     local clock = clockWidget(clock_max)
     local clock_w = clock:getSize().w
     clock:free()
@@ -807,6 +854,68 @@ local function registerClockZones(screen, margin, top, content_w, status_h)
         end)
 end
 
+-- Registers tap & swipe zones on the center of the status bar when page dots are shown.
+local function registerTopDotsZones(screen, margin, top, content_w, status_h, dots_info)
+    local sw, sh = Screen:getWidth(), Screen:getHeight()
+    local active = dots_info and screen._kobold_top_dots and (screen._kobold_top_dots.count or 0) > 1
+    local icon1_x = statusIconX(margin, content_w, 1)
+    local tap_x, tap_w = 0, 0
+    local swipe_x, swipe_w = 0, 0
+    if active then
+        local pad = Screen:scaleBySize(14)
+        local dx = margin + dots_info.x
+        local dw = dots_info.w
+        local left_bound = margin + math.floor(content_w * 0.28)
+        local right_bound = icon1_x - Screen:scaleBySize(6)
+        tap_x = math.max(left_bound, dx - pad)
+        tap_w = math.max(dw, math.min(right_bound, dx + dw + pad) - tap_x)
+        swipe_x = left_bound
+        swipe_w = math.max(tap_w, right_bound - swipe_x)
+    end
+    KoboldTaps.add(screen, "KoboldTopDotsTap", tap_x, top, tap_w, status_h, function(ges)
+        local cfg = screen._kobold_top_dots
+        if not (cfg and (cfg.count or 0) > 1 and cfg.on_select) then return end
+        local count = cfg.count
+        local idx = cfg.current or 1
+        if ges and ges.pos and tap_w > 0 then
+            local rel = (ges.pos.x - tap_x) / tap_w
+            local picked = math.max(1, math.min(count, math.floor(rel * count) + 1))
+            if picked == idx then
+                idx = (idx % count) + 1
+            else
+                idx = picked
+            end
+        else
+            idx = (idx % count) + 1
+        end
+        cfg.on_select(idx)
+    end)
+    screen:registerTouchZones({
+        {
+            id = "KoboldTopDotsSwipe",
+            ges = "swipe",
+            screen_zone = {
+                ratio_x = swipe_x / sw,
+                ratio_y = 0,
+                ratio_w = swipe_w / sw,
+                ratio_h = (top + status_h + Screen:scaleBySize(8)) / sh,
+            },
+            handler = function(ges)
+                local cfg = screen._kobold_top_dots
+                if not (cfg and (cfg.count or 0) > 1 and cfg.on_swipe) then return false end
+                if ges.direction == "west" then
+                    cfg.on_swipe(1)
+                    return true
+                elseif ges.direction == "east" then
+                    cfg.on_swipe(-1)
+                    return true
+                end
+                return false
+            end,
+        },
+    })
+end
+
 -- The status bar in a fixed-size frame, for the top of a Kobold screen whose
 -- body starts at (margin, margin). Also registers the tap zones over the
 -- contrast icon (brightness popup), the Wi-Fi icon (Wi-Fi popup) and the
@@ -815,9 +924,10 @@ end
 -- `top` (optional) is the y of the bar's top edge; it defaults to `margin`.
 function KoboldWidgets.statusBarFrame(screen, margin, content_w, status_h, top)
     top = top or margin
+    local bar_widget, dots_info = KoboldWidgets.statusBar(content_w, screen._kobold_top_dots)
     local frame = CenterContainer:new{
         dimen = Geom:new{ w = content_w, h = status_h },
-        KoboldWidgets.statusBar(content_w),
+        bar_widget,
     }
     screen._kobold_status = {
         frame = frame,
@@ -840,7 +950,8 @@ function KoboldWidgets.statusBarFrame(screen, margin, content_w, status_h, top)
         KoboldTaps.add(screen, "KoboldStatusIcon" .. i, math.floor(x - icon_gap / 2), top,
             icon_w + icon_gap, status_h, action)
     end
-    registerClockZones(screen, margin, top, content_w, status_h)
+    registerClockZones(screen, margin, top, content_w, status_h, dots_info)
+    registerTopDotsZones(screen, margin, top, content_w, status_h, dots_info)
     return frame
 end
 
@@ -858,9 +969,11 @@ end
 function KoboldWidgets.refreshStatusBar(screen)
     local s = screen._kobold_status
     if not s then return end
-    s.frame[1] = KoboldWidgets.statusBar(s.dimen.w)
+    local bar_widget, dots_info = KoboldWidgets.statusBar(s.dimen.w, screen._kobold_top_dots)
+    s.frame[1] = bar_widget
     -- The clock may have changed width (layout, date): its tap zone follows.
-    registerClockZones(screen, s.dimen.x, s.dimen.y, s.dimen.w, s.dimen.h)
+    registerClockZones(screen, s.dimen.x, s.dimen.y, s.dimen.w, s.dimen.h, dots_info)
+    registerTopDotsZones(screen, s.dimen.x, s.dimen.y, s.dimen.w, s.dimen.h, dots_info)
     UIManager:setDirty(screen, function() return "ui", s.dimen end)
 end
 
@@ -947,6 +1060,14 @@ local function isEdgeSwipe(ev)
     if ok and type(d) == "table" and tonumber(d.w) then edge = tonumber(d.w) end
     local W = Screen:getWidth()
     return ev.pos.x < W * edge or ev.pos.x > W * (1 - edge)
+end
+
+local function isTopBarHorizontalSwipe(screen, ev)
+    if ev.ges ~= "swipe" or not ev.pos then return false end
+    if ev.direction ~= "west" and ev.direction ~= "east" then return false end
+    local s = screen._kobold_status
+    local bottom = (s and s.dimen and (s.dimen.y + s.dimen.h)) or KoboldMetrics.statusBar().bottom
+    return ev.pos.y <= bottom + Screen:scaleBySize(8)
 end
 
 -- A vertical swipe along a side edge: where KOReader's brightness and warmth
@@ -1080,10 +1201,12 @@ function KoboldWidgets.addScreenEvents(ScreenClass)
         if ev.ges == "swipe" and self._bar_drag_busy and self._bar_drag_busy() then
             return true
         end
-        if isEdgeSwipe(ev) and forwardGesture(ev, isEdgeAlongSwipe(ev)) then return true end
+        local top_bar_hswipe = isTopBarHorizontalSwipe(self, ev)
+        if not top_bar_hswipe and isEdgeSwipe(ev) and forwardGesture(ev, isEdgeAlongSwipe(ev)) then return true end
         if cornerIsSet(cornerGesture(ev)) and not koboldControlAt(self, ev)
             and forwardGesture(ev, true) then return true end
         if InputContainer.onGesture(self, ev) then return true end
+        if top_bar_hswipe then return true end
         return forwardGesture(ev)
     end
 

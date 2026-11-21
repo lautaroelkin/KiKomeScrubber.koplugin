@@ -5,7 +5,7 @@
 -- the book's bookmarks, highlights and notes, see below) and Edit (a pencil:
 -- it swaps the sheet's content for the Edit screen: rating, review, status and
 -- the book's actions); then a row of facts (pages, language, format, size) and
--- a Synopsis / Details switch. The data comes from KOReader (its book info,
+-- a Synopsis / Details / Statistics switch. The data comes from KOReader (its book info,
 -- with any corrections made in Book information).
 --
 -- Look: soft grey surfaces with big rounded corners, one black pill for the
@@ -319,6 +319,493 @@ local function detailsCard(rows, w, max_h, M)
     }
 end
 
+-- ── The Statistics tab ────────────────────────────────────────────────────
+-- Reading numbers of this one book (kobold/data/stats.lua, bookStats): a card
+-- with the big numbers (time read, pages, days and, when it can be told, the
+-- time left), a card with the last 7 days as soft bars (today in black; tap a
+-- day to see its minutes) with the daily average and the time per page under
+-- the bars and, if there is room, First read and Last read in one line.
+-- Nothing to show yet: one calm card that says so.
+
+-- 5 h 12 min, 42 min, 3 h, "< 1 min"
+local function durationText(seconds)
+    seconds = math.floor((tonumber(seconds) or 0) + 0.5)
+    if seconds <= 0 then return string.format(_("%d min"), 0) end
+    if seconds < 60 then return _("< 1 min") end
+    local h = math.floor(seconds / 3600)
+    local m = math.floor((seconds % 3600) / 60 + 0.5)
+    if m == 60 then h, m = h + 1, 0 end
+    if h == 0 then return string.format(_("%d min"), m) end
+    if m == 0 then return string.format(_("%d h"), h) end
+    return string.format(_("%d h %d min"), h, m)
+end
+
+-- the time one page takes: in seconds when it is under a minute
+local function perPageText(seconds)
+    if seconds < 60 then return string.format(_("%d s"), math.max(1, math.floor(seconds + 0.5))) end
+    return durationText(seconds)
+end
+
+-- Big numbers side by side with a caption under each, in one grey card.
+-- Both the value and the caption shrink together if any cell overflows its width.
+local function statsSummary(cells, w, M)
+    local card_pad, row_pad = U(M.card_pad), U(M.row_pad)
+    local cell_w = math.floor((w - 2 * card_pad) / #cells)
+    local avail_w = cell_w - U(8)
+    local val_size = M.font + ((#cells >= 4) and 3 or 6)
+    local cap_size = 12
+    local min_val, min_cap = 11, 9
+
+    local function build(vs, cs, clamp)
+        local made, fits = {}, true
+        for i, c in ipairs(cells) do
+            local vw = TextWidget:new{
+                text = c.value, face = KoboldWidgets.face(vs), bold = true,
+                max_width = clamp and avail_w or nil,
+            }
+            local cw = TextWidget:new{
+                text = c.caption, face = KoboldWidgets.secondaryFace(cs),
+                fgcolor = KoboldWidgets.subtitleColor(),
+                max_width = clamp and avail_w or nil,
+            }
+            if vw:getSize().w > avail_w or cw:getSize().w > avail_w then
+                fits = false
+            end
+            made[i] = VerticalGroup:new{
+                align = "center",
+                vw,
+                VerticalSpan:new{ width = U(2) },
+                cw,
+            }
+        end
+        return made, fits
+    end
+
+    local made
+    while true do
+        local at_min = (val_size <= min_val and cap_size <= min_cap)
+        local m, fits = build(val_size, cap_size, at_min)
+        if fits or at_min then
+            made = m
+            break
+        end
+        for _i, item in ipairs(m) do pcall(function() item:free() end) end
+        if val_size > min_val then val_size = val_size - 1 end
+        if cap_size > min_cap then cap_size = cap_size - 1 end
+    end
+
+    local cell_h = 0
+    for _i, m in ipairs(made) do cell_h = math.max(cell_h, m:getSize().h) end
+    local row = HorizontalGroup:new{ align = "center" }
+    for _i, m in ipairs(made) do
+        row[#row + 1] = CenterContainer:new{ dimen = Geom:new{ w = cell_w, h = cell_h }, m }
+    end
+    return FrameContainer:new{
+        bordersize = 0, padding = card_pad, radius = U(16), background = SOFT,
+        VerticalGroup:new{
+            align = "left",
+            VerticalSpan:new{ width = row_pad },
+            row,
+            VerticalSpan:new{ width = row_pad },
+        },
+    }
+end
+
+-- The last 7 days: a caption and the week's total on top, then one soft bar
+-- per day (the tallest is the most read; today is black; a day without
+-- reading is only a small light dot) and the day's initial under each, and
+-- under the bars one line with two small numbers, "Daily average: 12 min" and
+-- "Per page: 30 s", of the week (with `footer` true).
+-- `sel` (1 to 7) is a day the reader tapped: its bar turns black and the
+-- others go light grey; the top shows its date and minutes instead of the
+-- week's total and the two numbers become that day's pages and time per page.
+-- A tap on the same day brings the week back.
+-- Returns the card, the width of a day's column, the card's padding and the
+-- height of the footer (it is not part of what a tap on a day reaches).
+local function weekCard(days, w, bar_h, M, sel, footer)
+    local card_pad = U(M.card_pad)
+    local inner = w - 2 * card_pad
+    local col_w = math.floor(inner / #days)
+    local bar_w = math.max(U(10), math.min(U(28), math.floor(col_w * 0.42)))
+    local most, total, pages = 0, 0, 0
+    for _i, d in ipairs(days) do
+        most = math.max(most, d.seconds)
+        total = total + d.seconds
+        pages = pages + (d.pages or 0)
+    end
+    local dot_h = U(6)
+    local label_gap = U(6)
+    local cap_face = KoboldWidgets.secondaryFace(12)
+    local probe = TextWidget:new{ text = "M", face = cap_face }
+    local label_h = probe:getSize().h
+    pcall(function() probe:free() end)
+
+    local cols = HorizontalGroup:new{ align = "top" }
+    for i, d in ipairs(days) do
+        -- black: the tapped day, or today while no day is tapped
+        local black = (sel ~= nil and i == sel) or (sel == nil and d.today)
+        -- with a day tapped, the other bars step back to the light grey
+        local quiet = (sel ~= nil) and LINE or KoboldWidgets.subtitleColor()
+        local h, color = dot_h, black and BLACK or LINE
+        if d.seconds > 0 and most > 0 then
+            h = math.max(dot_h, math.floor(bar_h * d.seconds / most))
+            color = black and BLACK or quiet
+        end
+        local bar = FrameContainer:new{
+            bordersize = 0, padding = 0, radius = math.min(math.floor(bar_w / 2), math.floor(h / 2)),
+            background = color, block(bar_w, h),
+        }
+        local label = TextWidget:new{
+            text = d.label, face = cap_face, bold = black,
+            fgcolor = black and BLACK or KoboldWidgets.subtitleColor(), max_width = col_w,
+        }
+        cols[#cols + 1] = CenterContainer:new{
+            dimen = Geom:new{ w = col_w, h = bar_h + label_gap + label_h },
+            VerticalGroup:new{
+                align = "center",
+                VerticalSpan:new{ width = bar_h - h },
+                bar,
+                VerticalSpan:new{ width = label_gap },
+                label,
+            },
+        }
+    end
+
+    local caption_text, value_text = _("Last 7 days"), durationText(total)
+    local day = sel and days[sel]
+    if day then
+        caption_text, value_text = os.date("%a %d %b", day.ts), durationText(day.seconds)
+    end
+    local caption = TextWidget:new{
+        text = caption_text, face = KoboldWidgets.secondaryFace(M.font - 1),
+        fgcolor = KoboldWidgets.subtitleColor(), max_width = math.floor(inner * 0.5),
+    }
+    local sum = TextWidget:new{
+        text = value_text, face = KoboldWidgets.face(M.font), bold = true,
+        max_width = math.floor(inner * 0.5),
+    }
+    local head_h = math.max(caption:getSize().h, sum:getSize().h)
+    local head = OverlapGroup:new{
+        dimen = Geom:new{ w = inner, h = head_h },
+        LeftContainer:new{ dimen = Geom:new{ w = inner, h = head_h }, caption },
+        RightContainer:new{ dimen = Geom:new{ w = inner, h = head_h }, sum },
+    }
+    local list = VerticalGroup:new{
+        align = "left",
+        head,
+        VerticalSpan:new{ width = U(M.gap) },
+        cols,
+    }
+
+    -- two numbers under the bars, separated by hairlines
+    local footer_h = 0
+    if footer then
+        local secs, n = total, pages
+        local left
+        if day then
+            secs, n = day.seconds, day.pages or 0
+            left = { value = tostring(n), caption = _("Pages read") }
+        else
+            left = { value = durationText(total / #days), caption = _("Daily average") }
+        end
+        local right = { value = (n > 0 and secs > 0) and perPageText(secs / n) or "-", caption = _("Per page") }
+        -- one line per number: "Daily average:  12 min", the caption in grey and
+        -- the value in bold, the two halves with no line between them
+        local cell_w = math.floor(inner / 2)
+        local function cell(c)
+            local value = TextWidget:new{
+                text = c.value, face = KoboldWidgets.face(M.font - 1), bold = true,
+                max_width = cell_w - U(8),
+            }
+            local gap_w = U(6)
+            local label = TextWidget:new{
+                text = c.caption .. ":", face = KoboldWidgets.secondaryFace(M.font - 1),
+                fgcolor = KoboldWidgets.subtitleColor(),
+                max_width = math.max(U(20), cell_w - U(8) - value:getSize().w - gap_w),
+            }
+            return HorizontalGroup:new{ align = "center", label, HorizontalSpan:new{ width = gap_w }, value }
+        end
+        local lc, rc = cell(left), cell(right)
+        local cell_h = math.max(lc:getSize().h, rc:getSize().h)
+        local pad = U(math.max(3, M.row_pad - 3))
+        local above = U(5)   -- no hairline above the numbers any more: less room taken
+        local frow = HorizontalGroup:new{
+            align = "center",
+            CenterContainer:new{ dimen = Geom:new{ w = cell_w, h = cell_h }, lc },
+            CenterContainer:new{ dimen = Geom:new{ w = cell_w, h = cell_h }, rc },
+        }
+        list[#list + 1] = VerticalSpan:new{ width = above + pad }
+        list[#list + 1] = frow
+        footer_h = above + pad + cell_h
+    end
+    local card = FrameContainer:new{
+        bordersize = 0, padding = card_pad, radius = U(16), background = SOFT,
+        list,
+    }
+    return card, col_w, card_pad, footer_h
+end
+
+-- The extra numbers as a small grid, in the look of the three big ones: each
+-- cell has its value in bold over a small grey caption, cells of a row are
+-- separated by hairlines and so are the rows. `rowsets` is a list of rows,
+-- each a list of { value, caption }; the rows that do not fit max_h are left
+-- out (the last ones first), nil when not even the first one fits.
+local function statsGrid(rowsets, w, max_h, M)
+    local card_pad = U(M.card_pad)
+    local row_pad = U(math.max(3, M.row_pad - 3))
+    local inner = w - 2 * card_pad
+    local line_w = U(1)
+    local list = VerticalGroup:new{ align = "left" }
+    local used = 2 * card_pad
+    local first = true
+    for _i, cells in ipairs(rowsets) do
+        local n = #cells
+        local cell_w = math.floor((inner - (n - 1) * line_w) / n)
+        local made = {}
+        for j, c in ipairs(cells) do
+            made[j] = VerticalGroup:new{
+                align = "center",
+                TextWidget:new{
+                    text = c.value, face = KoboldWidgets.face(M.font), bold = true,
+                    max_width = cell_w - U(8),
+                },
+                VerticalSpan:new{ width = U(1) },
+                TextWidget:new{
+                    text = c.caption, face = KoboldWidgets.secondaryFace(12),
+                    fgcolor = KoboldWidgets.subtitleColor(), max_width = cell_w - U(8),
+                },
+            }
+        end
+        local cell_h = made[1]:getSize().h
+        local sep_h = first and 0 or U(1)
+        if used + sep_h + cell_h + 2 * row_pad > max_h then
+            for _j, m in ipairs(made) do pcall(function() m:free() end) end
+            break
+        end
+        if not first then
+            list[#list + 1] = LineWidget:new{ dimen = Geom:new{ w = inner, h = sep_h }, background = LINE }
+        end
+        local row = HorizontalGroup:new{ align = "center" }
+        for j, m in ipairs(made) do
+            if j > 1 then
+                row[#row + 1] = LineWidget:new{ dimen = Geom:new{ w = line_w, h = cell_h }, background = LINE }
+            end
+            row[#row + 1] = CenterContainer:new{ dimen = Geom:new{ w = cell_w, h = cell_h }, m }
+        end
+        list[#list + 1] = VerticalSpan:new{ width = row_pad }
+        list[#list + 1] = row
+        list[#list + 1] = VerticalSpan:new{ width = row_pad }
+        used = used + sep_h + cell_h + 2 * row_pad
+        first = false
+    end
+    if first then return nil end
+    return FrameContainer:new{
+        bordersize = 0, padding = card_pad, radius = U(16), background = SOFT,
+        list,
+    }
+end
+
+-- First read / Last read on ONE line: "First read: 12 Mar 2026 | Last read: 14 Nov 2026",
+-- the caption in grey and the date in bold, with no line between them. When the long
+-- date does not fit the cell it is written short (12/03/26) and, if that is still
+-- too wide, in a slightly smaller text. `items` is a list of { caption, ts }.
+-- Returns the card, or nil when not even this one line fits max_h.
+local DATE_LONG, DATE_SHORT = "%d %b %Y", "%d/%m/%y"
+local function statsInlineRow(items, w, max_h, M)
+    local card_pad = U(M.card_pad)
+    local row_pad = U(math.max(3, M.row_pad - 3))
+    local inner = w - 2 * card_pad
+    local n = #items
+    local cell_w = math.floor(inner / n)
+    local gap_w = U(6)
+    local room_w = cell_w - U(8)
+
+    local function build(fmt, size, clamp)
+        local made, fits = {}, true
+        for i, it in ipairs(items) do
+            local value = TextWidget:new{
+                text = os.date(fmt, it.ts), face = KoboldWidgets.face(size), bold = true,
+            }
+            local label = TextWidget:new{
+                text = it.caption .. ":", face = KoboldWidgets.secondaryFace(size),
+                fgcolor = KoboldWidgets.subtitleColor(),
+                max_width = clamp and math.max(U(20), room_w - value:getSize().w - gap_w) or nil,
+            }
+            if label:getSize().w + gap_w + value:getSize().w > room_w then fits = false end
+            made[i] = { label = label, value = value }
+        end
+        return made, fits
+    end
+    local function freeAll(made)
+        for _i, m in ipairs(made) do
+            pcall(function() m.label:free() end)
+            pcall(function() m.value:free() end)
+        end
+    end
+
+    local attempts = {
+        { DATE_LONG,  M.font - 1 },
+        { DATE_LONG,  math.max(10, M.font - 2) },
+        { DATE_SHORT, M.font - 1 },
+        { DATE_SHORT, math.max(10, M.font - 2) },
+        { DATE_SHORT, math.max(9,  M.font - 4) },
+        { DATE_SHORT, 8 },
+    }
+    local made
+    for i, a in ipairs(attempts) do
+        local last = (i == #attempts)
+        local m, fits = build(a[1], a[2], last)
+        if fits or last then
+            made = m
+            break
+        end
+        freeAll(m)
+    end
+
+    local cells, cell_h = {}, 0
+    for i, m in ipairs(made) do
+        cells[i] = HorizontalGroup:new{ align = "center", m.label, HorizontalSpan:new{ width = gap_w }, m.value }
+        cell_h = math.max(cell_h, cells[i]:getSize().h)
+    end
+    if 2 * card_pad + 2 * row_pad + cell_h > max_h then
+        freeAll(made)
+        return nil
+    end
+    local row = HorizontalGroup:new{ align = "center" }
+    for _i, c in ipairs(cells) do
+        row[#row + 1] = CenterContainer:new{ dimen = Geom:new{ w = cell_w, h = cell_h }, c }
+    end
+    return FrameContainer:new{
+        bordersize = 0, padding = card_pad, radius = U(16), background = SOFT,
+        VerticalGroup:new{
+            align = "left",
+            VerticalSpan:new{ width = row_pad },
+            row,
+            VerticalSpan:new{ width = row_pad },
+        },
+    }
+end
+
+-- The body of the Statistics tab, always body_h tall (the sheet keeps its size),
+-- with no scrolling: when the screen is short the week's bars get lower first,
+-- then the rows of the grid at the bottom are left out one by one, and last the
+-- sheet is drawn at a tighter level (smaller spacing and text).
+-- `data` is bookStats() (nil: nothing known), `o` = { frac, status, page_count },
+-- `sel` the tapped day, x0 / body_y where the body starts on the screen.
+-- Returns the widget, the screen rects of the week's 7 columns (for taps) and
+-- the rect of the week card; or nil when it does not fit this level.
+local function statsBody(data, o, w, body_h, M, last_level, sel, x0, body_y)
+    local gap = U(M.gap)
+    if not data or (data.seconds or 0) <= 0 then
+        local card_h = math.min(body_h, U(150))
+        local card = roundBox(w, card_h, U(16), SOFT, VerticalGroup:new{
+            align = "center",
+            TextWidget:new{
+                text = _("No reading statistics yet"), face = KoboldWidgets.face(17), bold = true,
+                max_width = w - U(32),
+            },
+            VerticalSpan:new{ width = U(6) },
+            TextBoxWidget:new{
+                text = _("Read a few pages and they will show up here."),
+                face = KoboldWidgets.secondaryFace(14), fgcolor = KoboldWidgets.subtitleColor(),
+                width = w - U(64), alignment = "center",
+            },
+        })
+        return VerticalGroup:new{
+            align = "left", card, VerticalSpan:new{ width = math.max(0, body_h - card_h) },
+        }
+    end
+
+    -- the time left to finish: the pace of this book times what is not read
+    -- yet (the fourth big number, when it can be told)
+    local rate = (data.pages > 0) and (data.seconds / data.pages) or nil
+    local book_pages = data.book_pages or o.page_count
+    local cells = {
+        { value = durationText(data.seconds), caption = _("Time read") },
+        { value = tostring(data.pages), caption = _("Pages read") },
+        { value = tostring(data.days), caption = _("Reading days") },
+    }
+    if rate and o.status ~= "complete" and o.frac > 0 and o.frac < 1 and book_pages and book_pages > 0 then
+        cells[#cells + 1] = {
+            value = "~" .. durationText(rate * book_pages * (1 - o.frac)), caption = _("Time left"),
+        }
+    end
+    local summary = statsSummary(cells, w, M)
+    local summary_h = summary:getSize().h
+
+    -- First and last read in one line, in a small card. Its room is kept while
+    -- the week's bars get lower, so the bars give way before this row does.
+    local dates = {}
+    if data.first then dates[#dates + 1] = { caption = _("First read"), ts = data.first } end
+    if data.last then dates[#dates + 1] = { caption = _("Last read"), ts = data.last } end
+    local dates_card = (#dates > 0) and statsInlineRow(dates, w, math.huge, M) or nil
+    local dates_h = dates_card and (gap + dates_card:getSize().h) or 0
+
+    -- the week: the bars get lower until it all fits (the sheet never scrolls);
+    -- if even the lowest bars do not fit, the two numbers under them go
+    local bar_h, min_bar = U(M.tile), U(26)
+    local footer = true
+    local chart, col_w, card_pad, footer_h = weekCard(data.week, w, bar_h, M, sel, footer)
+    local function shrink()
+        while summary_h + gap + chart:getSize().h + dates_h > body_h and (bar_h > min_bar or footer) do
+            pcall(function() chart:free() end)
+            if bar_h > min_bar then
+                bar_h = math.max(min_bar, bar_h - U(6))
+            else
+                footer = false
+            end
+            chart, col_w, card_pad, footer_h = weekCard(data.week, w, bar_h, M, sel, footer)
+        end
+    end
+    shrink()
+    if summary_h + gap + chart:getSize().h + dates_h > body_h then
+        if not last_level then
+            pcall(function() summary:free() end)
+            pcall(function() chart:free() end)
+            if dates_card then pcall(function() dates_card:free() end) end
+            return nil
+        end
+        -- tightest level and still no room: the dates row is the one left out
+        if dates_card then
+            pcall(function() dates_card:free() end)
+            dates_card, dates_h = nil, 0
+            pcall(function() chart:free() end)
+            bar_h, footer = U(M.tile), true
+            chart, col_w, card_pad, footer_h = weekCard(data.week, w, bar_h, M, sel, footer)
+            shrink()
+        end
+    end
+
+    local extra = body_h - (summary_h + gap + chart:getSize().h + dates_h)
+    if extra > 0 then
+        local max_bar = U(180)
+        local grow = math.min(extra, math.max(0, max_bar - bar_h))
+        if grow > 0 then
+            pcall(function() chart:free() end)
+            bar_h = bar_h + grow
+            chart, col_w, card_pad, footer_h = weekCard(data.week, w, bar_h, M, sel, footer)
+        end
+    end
+
+    local list = VerticalGroup:new{ align = "left", summary, VerticalSpan:new{ width = gap }, chart }
+    if dates_card then
+        list[#list + 1] = VerticalSpan:new{ width = gap }
+        list[#list + 1] = dates_card
+    end
+
+    -- where a tap on a day lands: the column of the week card, over the bars
+    local chart_y = body_y + summary_h + gap
+    local chart_h = chart:getSize().h
+    local cols = {}
+    for i = 1, #data.week do
+        cols[i] = Geom:new{ x = x0 + card_pad + (i - 1) * col_w, y = chart_y, w = col_w, h = chart_h - footer_h }
+    end
+    local chart_rect = Geom:new{ x = x0, y = chart_y, w = w, h = chart_h }
+    return VerticalGroup:new{
+        align = "left", list, VerticalSpan:new{ width = math.max(0, body_h - list:getSize().h) },
+    }, cols, chart_rect
+end
+
 -- Keywords split into words (one per line, or separated by , or ;).
 local function splitKeywords(s)
     local words = {}
@@ -616,10 +1103,10 @@ function KoboldBookDetails:buildDetails(level)
             tiles[#tiles + 1] = roundBox(tile_w, tile_h, U(16), SOFT, VerticalGroup:new{
                 align = "center",
                 TextWidget:new{
-                    text = f.value, face = KoboldWidgets.face(19), bold = true,
+                    text = f.value, face = KoboldWidgets.face(M.font + 3), bold = true,
                     max_width = tile_w - U(12),
                 },
-                VerticalSpan:new{ width = U(2) },
+                VerticalSpan:new{ width = -U(3) },
                 TextWidget:new{
                     text = fitLabel(f, tile_w - U(12)), face = KoboldWidgets.secondaryFace(12),
                     fgcolor = KoboldWidgets.subtitleColor(), max_width = tile_w - U(12),
@@ -631,10 +1118,15 @@ function KoboldBookDetails:buildDetails(level)
     -- Synopsis / Details as a segmented control: a grey pill track with the
     -- chosen segment in black.
     local seg_y = header_y + header_h + gap + (show_tiles and (tile_h + gap) or 0)
-    local seg_w = math.floor((inner_w - 2 * seg_pad) / 2)
+    local tab_list = {
+        { id = "synopsis", text = _("Synopsis") },
+        { id = "details", text = _("Details") },
+        { id = "statistics", text = _("Statistics") },
+    }
+    local seg_w = math.floor((inner_w - 2 * seg_pad) / #tab_list)
     local segments = HorizontalGroup:new{}
     self.tab_rects = {}
-    for i, t in ipairs({ { id = "synopsis", text = _("Synopsis") }, { id = "details", text = _("Details") } }) do
+    for i, t in ipairs(tab_list) do
         local selected = t.id == self.tab
         segments[#segments + 1] = pill(seg_w, seg_h, selected and BLACK or SOFT, TextWidget:new{
             text = t.text, face = KoboldWidgets.face(16), bold = selected,
@@ -651,12 +1143,25 @@ function KoboldBookDetails:buildDetails(level)
 
     -- Tab content fills the rest of the sheet.
     local body
+    self.stats_cols, self.stats_chart_rect = nil, nil   -- only the Statistics tab sets them
     if self.tab == "synopsis" then
         -- where the body starts on the screen: the sum of what is above it
         local body_y = y0 + top_h + gap + header_h + gap
             + (show_tiles and (tile_h + gap) or 0) + seg_total + gap
         body = self:buildSynopsis(plainText(props.description) or _("No synopsis."), inner_w, body_h, x0, body_y)
         pcall(function() full_card:free() end)
+    elseif self.tab == "statistics" then
+        pcall(function() full_card:free() end)
+        local ok_s, data = pcall(function() return require("kobold.data.stats").bookStats(info.md5) end)
+        if not ok_s then data = nil end
+        local body_y = y0 + top_h + gap + header_h + gap
+            + (show_tiles and (tile_h + gap) or 0) + seg_total + gap
+        local cols, chart_rect
+        body, cols, chart_rect = statsBody(data, { frac = frac, status = info.status, page_count = page_count },
+            inner_w, body_h, M, level >= #LEVELS, self.stats_day, x0, body_y)
+        -- too tall for this level: the whole sheet again, one level tighter
+        if not body then return self:buildDetails(level + 1) end
+        self.stats_cols, self.stats_chart_rect = cols, chart_rect
     else
         -- the whole card when it fits (it does, unless even the tightest level
         -- is too tall: then the last rows are left out)
@@ -5990,10 +6495,13 @@ function KoboldBookDetails:init()
             -- a tap on the bar: the page before (above the knob) or after
             local th = self.syn_bar.thumb
             self:goToSynopsisPage(self.syn.page + ((pos.y < th.y) and -1 or 1))
+        elseif self.tab == "statistics" and self:onStatsTap(pos) then
+            -- a day of the week card was tapped (see onStatsTap)
         else
             for id, rect in pairs(self.tab_rects) do
                 if pos:intersectWith(rect) and id ~= self.tab then
                     self.syn = nil
+                    self.stats_day = nil
                     self.tab = id
                     self:refresh()
                     return
@@ -6095,6 +6603,20 @@ end
 
 -- Draws the sheet again. With `rect` (a Geom), only that part of the screen
 -- is refreshed: a tap on a star must not flash the whole sheet.
+-- A tap on a day of the Statistics week card: that day's bar turns black and
+-- its minutes show; a tap on the same day goes back to the whole week. Only
+-- the week card is painted again. Returns true when the tap was on a day.
+function KoboldBookDetails:onStatsTap(pos)
+    for i, rect in ipairs(self.stats_cols or {}) do
+        if pos:intersectWith(rect) then
+            self.stats_day = (self.stats_day ~= i) and i or nil
+            self:refresh(self.stats_chart_rect)
+            return true
+        end
+    end
+    return false
+end
+
 function KoboldBookDetails:refresh(rect)
     if self.closed then return end
     self[1] = self:build()

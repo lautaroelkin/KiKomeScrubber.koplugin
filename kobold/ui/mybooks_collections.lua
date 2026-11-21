@@ -272,6 +272,10 @@ end
 -- The same screen as Edit book > Collections (a full-screen list with ticks),
 -- but for every selected book at once: tick the collections and Add puts all
 -- of them in each one. The books leave Uncollected by themselves.
+-- A collection that already holds every selected book shows ticked and greyed
+-- ("Already added") and a tap does nothing (inside a collection, that one is
+-- the open one); one that holds only some of them can be picked
+-- ("2 of 5 already added") and only gets the rest.
 function Methods:addSelectedToCollections(only)
     local RC = readCollection()
     -- `only`: a list of files (holding one book of Uncollected); with none, the selection
@@ -290,9 +294,21 @@ function Methods:addSelectedToCollections(only)
         return title(a):lower() < title(b):lower()
     end)
     local want = {}
+    -- how many of the books each collection holds already
+    local function heldIn(name)
+        local n = 0
+        local coll = RC.coll[name] or {}
+        for _i, file in ipairs(paths) do
+            if coll[file] ~= nil then n = n + 1 end
+        end
+        return n
+    end
+    local function full(name) return heldIn(name) >= #paths end
     local function count()
         local n = 0
-        for _i, name in ipairs(names) do if want[name] then n = n + 1 end end
+        for _i, name in ipairs(names) do
+            if want[name] and not full(name) then n = n + 1 end
+        end
         return n
     end
     require("kobold.ui.list_picker").show{
@@ -305,10 +321,19 @@ function Methods:addSelectedToCollections(only)
             for _i, name in ipairs(names) do
                 local size = 0
                 for _k in pairs(RC.coll[name] or {}) do size = size + 1 end
+                local have = heldIn(name)
+                local sub
+                if have >= #paths then
+                    sub = _("Already added")
+                elseif have > 0 then
+                    sub = string.format(_("%d of %d already added"), have, #paths)
+                else
+                    sub = (size == 1) and _("1 book") or (size .. _(" books"))
+                end
+                local locked = have >= #paths
                 rows[#rows + 1] = {
-                    id = name, icon = "book-marked", text = title(name),
-                    sub = (size == 1) and _("1 book") or (size .. _(" books")),
-                    marker = "tick", selected = want[name] == true, locked = false,
+                    id = name, icon = "book-marked", text = title(name), sub = sub,
+                    marker = "tick", selected = locked or want[name] == true, locked = locked,
                 }
             end
             return rows
@@ -320,13 +345,19 @@ function Methods:addSelectedToCollections(only)
             picker:reload()
         end,
         on_finish = function()
-            local picked, files = {}, {}
+            local picked = {}
             for _i, name in ipairs(names) do
-                if want[name] then picked[name] = true end
+                if want[name] and not full(name) then picked[name] = true end
             end
-            for _i, file in ipairs(paths) do files[file] = true end
             local ok = pcall(function()
-                RC:addItemsMultiple(files, picked)
+                -- each collection only gets the books it does not hold yet
+                for name in pairs(picked) do
+                    local files, any = {}, false
+                    for _i, file in ipairs(paths) do
+                        if RC.coll[name][file] == nil then files[file] = true any = true end
+                    end
+                    if any then RC:addItemsMultiple(files, { [name] = true }) end
+                end
                 RC:write(picked)
             end)
             if not ok then
@@ -341,7 +372,8 @@ function Methods:addSelectedToCollections(only)
 end
 
 -- Menu of the actions button in selection mode inside a collection: remove the
--- selected books from it, or select every book of the collection.
+-- selected books from it, add them to other collections (the same screen as in
+-- Uncollected), or select every book of the collection.
 function Methods:showCollectionSelectionMenu(rect)
     local n = Clipboard.count()
     local items = {
@@ -352,6 +384,14 @@ function Methods:showCollectionSelectionMenu(rect)
                   return
               end
               self:confirmRemoveSelectedFromCollection()
+          end },
+        { text = string.format(_("Add to collections (%d)"), n), icon = { "square-plus", "plus" },
+          action = function()
+              if n == 0 then
+                  toast(_("Select at least one book first."))
+                  return
+              end
+              self:addSelectedToCollections()
           end },
         { text = _("Select all"), icon = { "list-checks", "square-dot" },
           action = function()

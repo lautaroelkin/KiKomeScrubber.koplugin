@@ -27,11 +27,16 @@
 --     -- radio:   checked = bool,                a choice inside a choice page: draws a check,
 --     --          on_pick = function() end       tap runs on_pick and goes back one level
 --   }
--- Pages: "root" (the main screen), "general" (opening panel, corners, outline,
--- shelves and the status bar), "fonts" (the primary and the secondary font), "advanced" and one choice page per setting
+-- Pages: "root" (the main screen), "general" (opening pill, instant exit, stable pages
+-- and the status bar), "appearance" (fonts, cover outline, rounded corners), "fonts" (the
+-- primary and the secondary font, opened from Appearance), "advanced" and one choice page per setting
 -- (home_top, battery, stable_pages, clock_layout, clock_date_format, clock_pattern, library_list_rows, library_grid_rows,
 -- font_primary, font_secondary), "library", "library_tabs"
--- (the Library's tabs: order and on / off) and "library_tab:collections".
+-- (the Library's tabs: order and on / off) and "library_tab:collections", and the
+-- actions: "actions" (the library of your own actions, with New action), "action:<id>"
+-- (one of them), "actions_home" (which ones the Actions chip of Home shows, and in
+-- what order) and "actions_center" (the Action center: its switch, off by default, and
+-- which ones it shows), with "center_action:<id>" (shown on Home, shown in documents).
 -- Everything stays inside this window; no KOReader menus.
 
 local Blitbuffer      = require("ffi/blitbuffer")
@@ -58,6 +63,7 @@ local VerticalSpan    = require("ui/widget/verticalspan")
 local _               = require("kobold.i18n")
 local KoboldChips     = require("kobold.data.chips")
 local KoboldClock     = require("kobold.data.clock")
+local CustomActions   = require("kobold.data.custom_actions")
 local KoboldCovers    = require("kobold.data.covers")
 local KoboldFonts     = require("kobold.data.fonts")
 local KoboldLibrary   = require("kobold.data.library")
@@ -105,16 +111,18 @@ local function getSvgPath(filename)
     if not filename or filename == "" then return nil end
     local cached = _path_cache[filename]
     if cached ~= nil then return cached or nil end
-    -- A full path (such as KoboldMeta.icon gives) is used as it is.
-    if filename:sub(1, 1) == "/" then
+    -- A direct path (starts with "/" on Android, or relative like "plugins/..." on Kindle).
+    if filename:sub(1, 1) == "/" or filename:find("[/\\]") then
         local f = io.open(filename, "r")
         if f then
             f:close()
             _path_cache[filename] = filename
             return filename
         end
-        _path_cache[filename] = false
-        return nil
+        if filename:sub(1, 1) == "/" then
+            _path_cache[filename] = false
+            return nil
+        end
     end
     for _i, dir in ipairs(ICON_DIRS) do
         local p = dir .. filename
@@ -259,6 +267,17 @@ function KoboldSettings:clockItems()
     }
 end
 
+-- The icon of a row for an action: its own icon (an svg or png file, or one of the
+-- plugin's own as "kobold:<name>", see action_icon.lua), else the bolt.
+local function actionRowIcon(c)
+    local names = {}
+    local ok, ActionIcon = pcall(require, "kobold.ui.action_icon")
+    local path = ok and ActionIcon and ActionIcon.path(c.icon) or nil
+    if path then names[#names + 1] = path end
+    names[#names + 1] = "zap.svg"
+    return names
+end
+
 -- Pages are built fresh on every redraw, so values are always current.
 function KoboldSettings:getPageDefinition(page_id)
     local done = function() self:refresh() end
@@ -270,13 +289,28 @@ function KoboldSettings:getPageDefinition(page_id)
             items = {
                 {
                     text = _("General"), icon = { "settings.svg", "settings-2.svg" }, kind = "submenu", target = "general",
-                    desc = _("Opening pill, rounded corners, cover outline, fonts and the status bar."),
+                    desc = _("Opening pill, instant exit from books, stable pages and the status bar."),
+                },
+                {
+                    text = _("Appearance"), icon = "palette.svg", kind = "submenu", target = "appearance",
+                    desc = _("Fonts, cover outline and rounded corners."),
                 },
                 { section = _("Home") },
                 {
                     text = _("Top of Home"), icon = "house.svg", kind = "submenu", target = "home_top",
-                    value = ({ current = _("Current book"), clock = _("Literary clock (only English)") })[KoboldPrefs.get("home_top")] or _("Recent books"),
-                    desc = _("What Home shows above the shelves: the row of recent books, one card with the book you are reading, or a line from a book."),
+                    value = (function()
+                        local labels = {
+                            recent = _("Recent books"),
+                            current = _("Current book"),
+                            clock = _("Literary clock (only English)"),
+                        }
+                        local out = {}
+                        for _i, id in ipairs(KoboldPrefs.homeTopEnabled()) do
+                            if labels[id] then out[#out + 1] = labels[id] end
+                        end
+                        return #out > 0 and table.concat(out, ", ") or _("Recent books")
+                    end)(),
+                    desc = _("What Home shows above the shelves: turn on one or more views and put them in the order you like. The first one opens by default."),
                 },
                 {
                     text = _("Shelves"), icon = "square-library.svg", kind = "submenu", target = "shelves",
@@ -286,6 +320,12 @@ function KoboldSettings:getPageDefinition(page_id)
                 {
                     text = _("Library options"), icon = { "library.svg", "grid.svg" }, kind = "submenu", target = "library",
                     desc = _("The Library (My Books): its tabs (order, on / off) and how it lays out its books, in list and in grid view."),
+                },
+                { section = _("Actions") },
+                {
+                    text = _("Your actions"), icon = "zap.svg", kind = "submenu", target = "actions",
+                    value = tostring(#CustomActions.list()),
+                    desc = _("The actions you made: a name, an icon and what they run. Make new ones and choose where they show."),
                 },
                 { section = _("App") },
                 {
@@ -304,7 +344,31 @@ function KoboldSettings:getPageDefinition(page_id)
         }
     end
 
-    -- General: what used to be the General section, and the Status bar.
+    -- Appearance: fonts, cover outline and rounded corners.
+    if page_id == "appearance" then
+        return {
+            title = _("Appearance"),
+            items = {
+                {
+                    text = _("Fonts"), icon = { "type.svg", "pencil.svg" }, kind = "submenu", target = "fonts",
+                    desc = _("A primary font for most of the text and a secondary one for the details. By default both are KOReader's font."),
+                },
+                {
+                    text = _("Cover outline"), icon = "image.svg", kind = "toggle",
+                    setting = "cover_outline", default = true,
+                    desc = _("A thin grey line around every cover, on Home and in the library, in grid and list. Off: covers with no outline."),
+                },
+                {
+                    text = _("Rounded corners"), icon = "square.svg", kind = "toggle",
+                    setting = "rounded_corners", default = true,
+                    desc = _("Round the corners of the covers on Home and in the library, folders and empty collections included. Off: square corners."),
+                },
+            },
+        }
+    end
+
+    -- General: opening and closing, books and the Status bar. (Fonts, cover outline
+    -- and rounded corners are in Appearance.)
     if page_id == "general" then
         local page = {
             title = _("General"),
@@ -318,20 +382,6 @@ function KoboldSettings:getPageDefinition(page_id)
                     text = _("Instant exit from books"), icon = "zap.svg", kind = "toggle",
                     setting = "hot_park", default = true,
                     desc = _("Leaving a book shows KiKome at once; the book is really closed later, when you stop touching the device (or when KOReader's file browser is needed). Reopening the same book is instant too. Off: the book is closed first, as KOReader does."),
-                },
-                {
-                    text = _("Rounded corners"), icon = "square.svg", kind = "toggle",
-                    setting = "rounded_corners", default = true,
-                    desc = _("Round the corners of the covers on Home and in the library, folders included. Off: square corners."),
-                },
-                {
-                    text = _("Cover outline"), icon = "image.svg", kind = "toggle",
-                    setting = "cover_outline", default = true,
-                    desc = _("A thin grey line around every cover, on Home and in the library, in grid and list. Off: covers with no outline."),
-                },
-                {
-                    text = _("Fonts"), icon = { "type.svg", "pencil.svg" }, kind = "submenu", target = "fonts",
-                    desc = _("A primary font for most of the text and a secondary one for the details. By default both are KOReader's font."),
                 },
                 { section = _("Books") },
                 {
@@ -420,6 +470,174 @@ function KoboldSettings:getPageDefinition(page_id)
                     get = function() return KoboldChips.libraryCollectionShown(KoboldChips.NO_COLLECTION) end,
                     set = function(on) KoboldChips.setLibraryCollectionShown(KoboldChips.NO_COLLECTION, on) end,
                     desc = _("A list in the Library's Collections with the books that are in no collection. A book leaves it when you add it to one. Off: the list is hidden there. Home has its own switch in Shelves."),
+                },
+            },
+        }
+    end
+
+    -- Your actions: the library. Every action exists once, here; the places
+    -- that show them (Home today) only pick from this list.
+    if page_id == "actions" then
+        local Flow = require("kobold.ui.action_flow")
+        local changed = function() KoboldPrefs.touch(); self:refresh() end
+        local list = CustomActions.list()
+        local items = {}
+        if #list > 0 then items[#items + 1] = { section = _("Your actions") } end
+        for _i, c in ipairs(list) do
+            items[#items + 1] = {
+                text = c.name, icon = actionRowIcon(c), kind = "submenu", target = "action:" .. c.id,
+                desc = CustomActions.describe(c),
+            }
+        end
+        if #list == 0 then
+            items[#items + 1] = { kind = "note", text = _("No actions yet. Tap New action to make one.") }
+        end
+        items[#items + 1] = {
+            text = _("New action"), icon = "plus.svg", kind = "action",
+            desc = _("Pick what it runs (a KOReader action or a plugin), then give it a name and an icon. It shows on Home right away."),
+            callback = function() Flow.add(changed) end,
+        }
+        items[#items + 1] = { section = _("Show in") }
+        items[#items + 1] = {
+            text = _("Home (Chip)"), icon = "house.svg", kind = "submenu", target = "actions_home",
+            value = string.format(_("%d of %d"), CustomActions.shownCount("actions"), #list),
+            desc = _("Which actions the Actions chip of Home shows, and in what order."),
+        }
+        items[#items + 1] = {
+            text = _("Action center"), icon = "grid.svg", kind = "submenu", target = "actions_center",
+            value = (KoboldPrefs.get("action_center") == true)
+                and string.format(_("%d of %d"), CustomActions.shownCount("center"), #list) or _("Off"),
+            desc = _("A first tab in KOReader's menu, on Home and in books, with the book you are reading and your actions."),
+        }
+        return { title = _("Actions"), items = items }
+    end
+
+    -- One action: show it on Home or not, rename it, change its icon or what it runs, delete it.
+    if page_id:sub(1, 7) == "action:" then
+        local Flow = require("kobold.ui.action_flow")
+        local c = CustomActions.get(page_id:sub(8))
+        if not c then return { title = _("Actions"), items = {} } end
+        local changed = function() KoboldPrefs.touch(); self:refresh() end
+        return {
+            title = c.name,
+            items = {
+                {
+                    text = _("Show in Home"), icon = "house.svg", kind = "toggle",
+                    get = function() return CustomActions.isShown("actions", c.id) end,
+                    set = function(on) CustomActions.setShown("actions", c.id, on); KoboldPrefs.touch() end,
+                    desc = _("The Actions chip of Home shows this action. Off: it stays in your actions, Home does not show it."),
+                },
+                {
+                    text = _("Action center"), icon = "grid.svg", kind = "submenu", target = "center_action:" .. c.id,
+                    value = (CustomActions.isShown("center", c.id) or CustomActions.isShown("center_docs", c.id))
+                        and _("On") or _("Off"),
+                    desc = _("Where the Action center shows this action: on Home, in books."),
+                },
+                { text = _("Rename"), icon = "pencil.svg", kind = "action",
+                  callback = function() Flow.rename(c, changed) end },
+                { text = _("Change icon"), icon = "image.svg", kind = "action",
+                  callback = function() Flow.changeIcon(c, changed) end },
+                {
+                    text = _("Change what it runs"), icon = "settings-2.svg", kind = "action",
+                    value = (c.kind == "plugin") and _("Plugin") or _("KOReader action"),
+                    desc = CustomActions.describe(c),
+                    callback = function() Flow.changeTarget(c, changed) end,
+                },
+                { section = _("Action") },
+                {
+                    text = _("Delete action"), icon = "trash-2.svg", kind = "action",
+                    desc = _("Deletes it for good, from every place that shows it."),
+                    callback = function()
+                        Flow.confirmDelete(c, function() KoboldPrefs.touch(); self:popView() end)
+                    end,
+                },
+            },
+        }
+    end
+
+    -- Actions on Home: the same rows as Shelves (a switch, the name, up and down).
+    if page_id == "actions_home" then
+        local entries = CustomActions.surfaceList("actions")
+        local chip_on = false
+        for _i, ch in ipairs(KoboldChips.list()) do
+            if ch.id == "actions" then chip_on = ch.enabled and true or false end
+        end
+        local items = {
+            {
+                kind = "note",
+                text = chip_on and _("Choose which actions the Actions chip of Home shows, and in what order.")
+                    or _("The Actions chip is off. Turn it on in Shelves to see these actions on Home."),
+            },
+        }
+        if #entries == 0 then
+            items[#items + 1] = { text = _("No actions yet."), kind = "action", disabled = true }
+        else
+            items[#items + 1] = { section = _("Actions") }
+        end
+        for i, e in ipairs(entries) do
+            items[#items + 1] = {
+                kind = "chip", source = "actions", surface = "actions", chip_id = e.action.id, text = e.action.name,
+                enabled = e.enabled, has_page = false,
+                can_up = (i > 1), can_down = (i < #entries),
+            }
+        end
+        return { title = _("Home (Chip)"), items = items }
+    end
+
+    -- The Action center: the switch (off by default) and which actions it shows, in what order.
+    if page_id == "actions_center" then
+        local entries = CustomActions.surfaceList("center")
+        local items = {
+            {
+                text = _("Action center"), icon = "grid.svg", kind = "toggle",
+                get = function() return KoboldPrefs.get("action_center") == true end,
+                set = function(on)
+                    KoboldPrefs.set("action_center", on and true or false)
+                    -- Off: KOReader's own tabs are always back (Hide KOReader menu is undone).
+                    -- The menus take it the next time they open.
+                    if not on then KoboldPrefs.set("action_center_hide_menu", false) end
+                end,
+                desc = _("Adds a first tab to KOReader's menu, on Home and in books, with your actions as round buttons and the book you are reading. The other tabs stay next to it, unless you tap Hide there."),
+            },
+            {
+                kind = "note",
+                text = _("Open KOReader's menu to see it. Actions that switch something on or off show whether it is on."),
+            },
+        }
+        if #entries == 0 then
+            items[#items + 1] = { text = _("No actions yet."), kind = "action", disabled = true }
+        else
+            items[#items + 1] = { section = _("Actions") }
+        end
+        for i, e in ipairs(entries) do
+            items[#items + 1] = {
+                kind = "chip", source = "actions", surface = "center", chip_id = e.action.id, text = e.action.name,
+                -- on when it shows on Home or in books; the page of the row says which
+                enabled = e.enabled or CustomActions.isShown("center_docs", e.action.id), has_page = true,
+                can_up = (i > 1), can_down = (i < #entries),
+            }
+        end
+        return { title = _("Action center"), items = items }
+    end
+
+    -- One action in the Action center: shown when it opens on Home, shown when it opens in a book.
+    if page_id:sub(1, 14) == "center_action:" then
+        local c = CustomActions.get(page_id:sub(15))
+        if not c then return { title = _("Action center"), items = {} } end
+        return {
+            title = c.name,
+            items = {
+                {
+                    text = _("Show in Home"), icon = "house.svg", kind = "toggle",
+                    get = function() return CustomActions.isShown("center", c.id) end,
+                    set = function(on) CustomActions.setShown("center", c.id, on); KoboldPrefs.touch() end,
+                    desc = _("The Action center shows this action when it opens on Home."),
+                },
+                {
+                    text = _("Show in documents"), icon = "book-open-text.svg", kind = "toggle",
+                    get = function() return CustomActions.isShown("center_docs", c.id) end,
+                    set = function(on) CustomActions.setShown("center_docs", c.id, on); KoboldPrefs.touch() end,
+                    desc = _("The Action center shows this action when it opens inside a book."),
                 },
             },
         }
@@ -762,20 +980,28 @@ function KoboldSettings:getPageDefinition(page_id)
         end
         return { title = _("Stable pages"), items = items }
     elseif page_id == "home_top" then
-        local top = KoboldPrefs.get("home_top")
-        local page = radioPage(_("Top of Home"), {
-            { id = "recent", label = _("Recent books") },
-            { id = "current", label = _("Current book") },
-            { id = "clock", label = _("Literary clock (only English)") },
-        }, (top == "current" or top == "clock") and top or "recent", function(id)
-            KoboldPrefs.set("home_top", id)
-            broadcastChange()
-        end)
-        table.insert(page.items, 1, {
-            kind = "note",
-            text = _("Recent books: the latest covers. Current book: only the last one, with shortcuts. Literary clock: a line from a book."),
-        })
-        return page
+        local labels = {
+            recent = _("Recent books"),
+            current = _("Current book"),
+            clock = _("Literary clock (only English)"),
+        }
+        local list = KoboldPrefs.homeTopList()
+        local items = {
+            {
+                kind = "note",
+                text = _("Turn on the views you want and put them in order. The first one is shown when Home opens; swipe or tap the dots in the status bar to switch."),
+            },
+            { section = _("Views") },
+        }
+        for i, entry in ipairs(list) do
+            items[#items + 1] = {
+                kind = "chip", source = "home_top", chip_id = entry.id,
+                text = labels[entry.id] or entry.id,
+                enabled = entry.enabled, has_page = false,
+                can_up = (i > 1), can_down = (i < #list),
+            }
+        end
+        return { title = _("Top of Home"), items = items }
     elseif page_id == "battery" then
         return radioPage(_("Battery"), {
             { id = "fill", label = BATTERY_LABELS.fill },
@@ -802,8 +1028,7 @@ function KoboldSettings:getPageDefinition(page_id)
         end)
     end
 
-    -- Fonts: the two fonts of the plugin, and one choice page for each.
-    -- Fonts: the two fonts (opened from General), and one choice page for each.
+    -- Fonts: the two fonts (opened from Appearance), and one choice page for each.
     if page_id == "fonts" then
         return {
             title = _("Fonts"),
@@ -1343,7 +1568,44 @@ end
 -- Runs what a tapped row does.
 function KoboldSettings:activate(item, zone)
     local done = function() self:refresh() end
-    if item.kind == "chip" then
+    if item.kind == "chip" and item.source == "home_top" then
+        if zone == "toggle" then
+            local ok, why = KoboldPrefs.setHomeTopEnabled(item.chip_id, not item.enabled)
+            if not ok and why == "last" then
+                Toast.error(_("At least one option must stay on."))
+            end
+            broadcastChange()
+            done()
+        elseif zone == "up" and item.can_up then
+            KoboldPrefs.moveHomeTop(item.chip_id, -1)
+            broadcastChange()
+            done()
+        elseif zone == "down" and item.can_down then
+            KoboldPrefs.moveHomeTop(item.chip_id, 1)
+            broadcastChange()
+            done()
+        end
+    elseif item.kind == "chip" and item.source == "actions" then
+        -- Actions of a surface (Home's chip, the Action center): the switch and the arrows
+        -- change what it shows.
+        local surface = item.surface or "actions"
+        if zone == "toggle" then
+            CustomActions.setShown(surface, item.chip_id, not item.enabled)
+            -- the Action center has a second face, inside a book: the switch sets both
+            if surface == "center" then CustomActions.setShown("center_docs", item.chip_id, not item.enabled) end
+        elseif zone == "text" and item.has_page and surface == "center" then
+            self:pushView("center_action:" .. item.chip_id)
+            return
+        elseif zone == "up" and item.can_up then
+            CustomActions.moveIn(surface, item.chip_id, -1)
+        elseif zone == "down" and item.can_down then
+            CustomActions.moveIn(surface, item.chip_id, 1)
+        else
+            return
+        end
+        KoboldPrefs.touch()
+        done()
+    elseif item.kind == "chip" then
         -- The same rows serve the chips of Home (Shelves) and the Library's tabs.
         local is_tab = (item.source == "tabs")
         local list = is_tab and KoboldTabs or KoboldChips
