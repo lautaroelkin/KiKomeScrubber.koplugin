@@ -2215,3 +2215,12 @@ msgstr "El Centro de acciones muestra esta acción cuando se abre dentro de un l
 
 msgid "No other recent books."
 msgstr "No hay otros libros recientes."
+
+msgid "Type"
+msgstr "Tipo"
+
+msgid "Graphic novels"
+msgstr "Novelas gráficas"
+
+msgid "Documents"
+msgstr "Documentos"

@@ -2215,3 +2215,12 @@ msgstr "A Central de ações mostra esta ação quando abre dentro de um livro."
 
 msgid "No other recent books."
 msgstr "Não há outros livros recentes."
+
+msgid "Type"
+msgstr "Tipo"
+
+msgid "Graphic novels"
+msgstr "Graphic novels"
+
+msgid "Documents"
+msgstr "Documentos"
