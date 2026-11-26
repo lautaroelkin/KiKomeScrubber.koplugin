@@ -11,7 +11,9 @@
 -- on, grey and "Off" when it is off. Tapping it changes it and the panel stays
 -- open, so the new state is seen. Any other action closes the panel and runs.
 -- Tap below the panel, swipe it up or press a key to close it; with more tiles
--- than fit, swipe left or right to turn the page.
+-- than fit, swipe left or right to turn the page. The pages are shown as short
+-- horizontal lines above the handle: the current page is a longer black line,
+-- the others short grey ones. Tapping a line goes to that page.
 --
 --   local ActionCenter = require("kobold.ui.action_center")
 --   ActionCenter.enabled()          whether the swipe should open it
@@ -177,18 +179,34 @@ function Panel:build()
         y = y + used_rows * cell_h
     end
 
-    -- the handle at the bottom: a chevron pointing up (swipe up closes), and the
-    -- page number when there are several pages
+    -- page lines, when there are several pages: one horizontal line per page,
+    -- the current one longer and black, centered above the handle
+    self.dots = nil
+    if self.pages > 1 then
+        local thin, thick = math.max(2, U(3)), math.max(3, U(5))
+        local short_w, long_w, dgap = U(12), U(32), U(7)
+        local total = (self.pages - 1) * (short_w + dgap) + long_w
+        local dx = math.floor((W - total) / 2)
+        local dy = y + U(4)
+        local rects = {}
+        local cx = dx
+        for i = 1, self.pages do
+            local active = (i == self.page)
+            local w = active and long_w or short_w
+            local h = active and thick or thin
+            rects[#rects + 1] = {
+                x = cx, y = dy + math.floor((thick - h) / 2), w = w, h = h,
+                cx = cx + math.floor(w / 2), active = active,
+            }
+            cx = cx + w + dgap
+        end
+        self.dots = { rects = rects, x = dx, y = dy, w = total, h = thick }
+        y = dy + thick + U(10)
+    end
+
+    -- the handle at the bottom: a chevron pointing up (swipe up closes)
     self.chevron_size = U(26)
     self.chevron = keep(OptionSheet.iconWidget("chevron-up", self.chevron_size, BLACK))
-    if self.pages > 1 then
-        self.page_text = keep(TextWidget:new{
-            text = string.format("%d / %d", self.page, self.pages), face = KoboldWidgets.secondaryFace(13),
-            fgcolor = C_SECONDARY,
-        })
-    else
-        self.page_text = nil
-    end
     self.handle_y = y + U(2)
     self.border = U(2)
     self.height = self.handle_y + self.chevron_size + U(10) + self.border
@@ -229,11 +247,12 @@ function Panel:paintTo(bb, x, y)
         cell.label:paintTo(bb, x + cell.label_x, y + cell.label_y)
         if cell.state then cell.state:paintTo(bb, x + cell.state_x, y + cell.state_y) end
     end
-    self.chevron:paintTo(bb, x + math.floor((W - self.chevron_size) / 2), y + self.handle_y)
-    if self.page_text then
-        local pt = self.page_text:getSize()
-        self.page_text:paintTo(bb, x + W - U(24) - pt.w, y + self.handle_y + math.floor((self.chevron_size - pt.h) / 2))
+    if self.dots then
+        for _i, r in ipairs(self.dots.rects) do
+            bb:paintRoundedRect(x + r.x, y + r.y, r.w, r.h, r.active and BLACK or C_RULE, math.floor(r.h / 2))
+        end
     end
+    self.chevron:paintTo(bb, x + math.floor((W - self.chevron_size) / 2), y + self.handle_y)
 end
 
 function Panel:dismiss()
@@ -279,6 +298,21 @@ end
 
 function Panel:onTapCenter(_ev, ges)
     local pos = ges.pos
+    -- on the page lines (with a generous touch area): go to the nearest page
+    local d = self.dots
+    if d and pos.y >= d.y - U(12) and pos.y < d.y + d.h + U(12)
+        and pos.x >= d.x - U(16) and pos.x < d.x + d.w + U(16) then
+        local best, best_dist = nil, nil
+        for i, r in ipairs(d.rects) do
+            local dist = math.abs(pos.x - r.cx)
+            if not best_dist or dist < best_dist then best, best_dist = i, dist end
+        end
+        if best and best ~= self.page then
+            self.page = best
+            self:redraw()
+        end
+        return true
+    end
     -- below the panel, or on its handle: close
     if pos.y >= self.height or pos.y >= self.handle_y then return self:dismiss() end
     for _i, cell in ipairs(self.cells or {}) do

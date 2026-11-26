@@ -54,6 +54,7 @@ local KoboldPrefs     = require("kobold.data.prefs")
 local KoboldLibrary   = require("kobold.data.library")
 local KoboldMyBooksData = require("kobold.data.mybooks")
 local BookLang        = require("kobold.data.booklang")
+local BookType        = require("kobold.data.booktype")
 local Genres          = require("kobold.data.genres")
 local KoboldTabs      = require("kobold.data.tabs")
 local KoboldNav       = require("kobold.ui.nav")
@@ -75,6 +76,7 @@ local FILTER_KEY     = "kobold_mybooks_filter"      -- status: all / reading / u
 local SORT_KEY       = "kobold_mybooks_sort"        -- recent / oldest / added_newest / added_oldest
 local ALPHA_KEY      = "kobold_mybooks_alpha"       -- az / za
 local LANG_KEY       = "kobold_mybooks_lang"        -- a language code, e.g. "ES"
+local TYPE_KEY       = "kobold_mybooks_type"        -- book / comic / document
 local GROUP_SORT_KEY = "kobold_mybooks_group_sort"
 local VIEW_KEY       = "kobold_mybooks_view"  -- Books tab: "list" or "grid"
 
@@ -355,6 +357,7 @@ function KoboldMyBooks:init()
     self.sort, self.alpha = loadSort()
     local lang = G_reader_settings and G_reader_settings:readSetting(LANG_KEY)
     self.lang       = (type(lang) == "string" and lang ~= "") and lang or nil
+    self.kind       = readChoice(TYPE_KEY, BookType.TYPES, nil)
     self.group_sort = readChoice(GROUP_SORT_KEY, KoboldMyBooksData.GROUP_SORTS, "name_asc")
     self.view       = readChoice(VIEW_KEY, { "list", "grid" }, "list")
     self.page       = 1
@@ -518,9 +521,7 @@ function KoboldMyBooks:restoreState(state)
         if tab.id == state.tab then self.tab = tab.id end
     end
     if self.tab ~= "books" and state.group_key then
-        for _i, g in ipairs(KoboldMyBooksData.getGroups(self.books, self.tab)) do
-            if g.key == state.group_key then self.group = g break end
-        end
+        self.group = self:findGroup(self.tab, state.group_key)
     end
     self.folder = type(state.folder) == "string" and state.folder or nil
     self.page = tonumber(state.page) or 1
@@ -564,18 +565,47 @@ function KoboldMyBooks:isGrid()
     return self.view == "grid"
 end
 
+-- The filters of the Sort & Filter sheet that are on: { status, lang, kind },
+-- each nil when not chosen. They narrow the books of every tab but Files (a
+-- folder lists what is in it); Files has none today, but its pills and More
+-- menu already follow the same rules for when it gets them.
+function KoboldMyBooks:filtersApply()
+    return self.tab ~= "files"
+end
+
+function KoboldMyBooks:filters()
+    if not self:filtersApply() then return {} end
+    return {
+        status = (self.filter ~= "all") and self.filter or nil,
+        lang = self.lang,
+        kind = self.kind,
+    }
+end
+
+-- The group `key` of the Authors / Series / Collections / Genres list `kind`,
+-- with the filters on, or nil when it does not exist any more. It is kept even
+-- when the filters leave it with no books (it is the one that is open).
+function KoboldMyBooks:findGroup(kind, key)
+    for _i, g in ipairs(KoboldMyBooksData.getGroups(self.books, kind)) do
+        if g.key == key then
+            return KoboldMyBooksData.filterGroups({ g }, self:filters(), key)[1]
+        end
+    end
+    return nil
+end
+
 -- Recomputes the list for the current view and clamps the page to it.
 function KoboldMyBooks:applyList()
     if self.tab == "files" then
         self.list = self:listFolder(self:currentFolder())
     elseif self.tab == "books" then
-        local list = KoboldMyBooksData.filter(self.books, self.filter)
-        list = KoboldMyBooksData.byLanguage(list, self.lang)
+        local list = KoboldMyBooksData.matching(self.books, self:filters())
         self.list = KoboldMyBooksData.arrange(list, self.sort, self.alpha)
     elseif self.group then
         self.list = self.group.books
     else
         local groups = KoboldMyBooksData.getGroups(self.books, self.tab)
+        groups = KoboldMyBooksData.filterGroups(groups, self:filters())
         self.list = KoboldMyBooksData.sortGroups(groups, self.group_sort)
     end
     self.pages = math.max(1, math.ceil(#self.list / self:perPage()))
@@ -751,20 +781,29 @@ end
 
 -- One rounded gray pill, exactly pills_h tall. `icon` is a widget placed
 -- after the label, or before it when `icon_first` is set. `max_text_w`
--- shortens long labels.
-function KoboldMyBooks:buildPill(label, icon, icon_first, max_text_w)
+-- shortens long labels. `dark` makes it a black pill with white bold text (an
+-- active filter).
+function KoboldMyBooks:buildPill(label, icon, icon_first, max_text_w, dark)
     local L = self.L
-    local text = TextWidget:new{ text = label, face = KoboldWidgets.face(15), max_width = max_text_w }
+    local text = TextWidget:new{
+        text = label, face = KoboldWidgets.face(15), max_width = max_text_w,
+        bold = dark or nil, fgcolor = dark and Blitbuffer.COLOR_WHITE or nil,
+    }
     local gap = HorizontalSpan:new{ width = Screen:scaleBySize(6) }
-    local content = icon_first
-        and HorizontalGroup:new{ align = "center", icon, gap, text }
-        or HorizontalGroup:new{ align = "center", text, gap, icon }
+    local content
+    if not icon then
+        content = HorizontalGroup:new{ align = "center", text }
+    elseif icon_first then
+        content = HorizontalGroup:new{ align = "center", icon, gap, text }
+    else
+        content = HorizontalGroup:new{ align = "center", text, gap, icon }
+    end
     local content_h = content:getSize().h
     local pad_top = math.floor((L.pills_h - content_h) / 2)
     local pill = FrameContainer:new{
         bordersize = 0,
         radius = math.floor(L.pills_h / 2),
-        background = pillColor(),
+        background = dark and Blitbuffer.COLOR_BLACK or pillColor(),
         padding = 0,
         padding_left = L.pill_pad,
         padding_right = L.pill_pad,
@@ -775,42 +814,115 @@ function KoboldMyBooks:buildPill(label, icon, icon_first, max_text_w)
     return pill, pill:getSize().w
 end
 
--- The pills for the current view, left to right. Records each pill's tap
--- rectangle and action.
-function KoboldMyBooks:buildPills()
-    local L = self.L
-    local icon_size = Screen:scaleBySize(18)
-    local specs
+-- The grey pill (or label) on the left of the row for the current view: the
+-- back pill of Files or of an open group, or Add collection. Empty on the
+-- other tabs. While filter pills are on, it gives its place to them and
+-- goes to the More menu (see movedItems).
+function KoboldMyBooks:leftSpecs()
     if self.tab == "files" then
         -- Back pill to the parent folder, also above the home folder; at
         -- the top of the file system a plain label.
         local dir = self:currentFolder()
         local name = dir:match("([^/]+)/*$") or dir
         if dir == "/" then
-            specs = { { label = name, plain = true, action = function() end } }
-        else
-            specs = { { label = name, back = true, action = function() self:openFolder(self:parentFolder()) end } }
+            return { { label = name, plain = true, action = function() end } }
         end
+        return { { label = name, back = true, action = function() self:openFolder(self:parentFolder()) end } }
     elseif self.tab == "books" then
-        specs = {}  -- Status, sort, A-Z and language live in the adjust sheet
+        return {}  -- Status, sort, A-Z and language live in the adjust sheet
     elseif self.group then
-        specs = { {
+        return { {
             label = self.group.name, back = true,
             action = function() self:closeGroup() end,
         } }
     elseif self.tab == "collections" then
         -- Where the Filter / Sort pills were: a grey pill to make a collection.
-        specs = { { label = _("Add collection"), add = true, action = function() self:newCollection() end } }
-    else
-        specs = {}  -- A-Z / Z-A lives in the adjust sheet
+        return { { label = _("Add collection"), add = true, action = function() self:newCollection() end } }
     end
+    return {}  -- A-Z / Z-A lives in the adjust sheet
+end
+
+-- The filters that are on, as black pills: { label, action } from the most
+-- general to the most specific: type, status, language. Tapping a pill turns its filter off. None in
+-- selection mode, and none on a tab the filters do not apply to (Files).
+function KoboldMyBooks:filterPills()
+    local out = {}
+    if self:selecting() or not self:filtersApply() then return out end
+    if self.kind then
+        out[#out + 1] = {
+            label = BookType.label(self.kind),
+            action = function() self:setChoice("kind", TYPE_KEY, nil) end,
+        }
+    end
+    if self.filter ~= "all" then
+        local labels = {
+            reading = _("Reading"), unread = _("Unread"),
+            finished = _("Finished"), onhold = _("On hold"),
+        }
+        out[#out + 1] = {
+            label = labels[self.filter] or self.filter,
+            action = function() self:setChoice("filter", FILTER_KEY, "all") end,
+        }
+    end
+    if self.lang then
+        out[#out + 1] = { label = self.lang, action = function() self:setChoice("lang", LANG_KEY, nil) end }
+    end
+    return out
+end
+
+-- The rows the More menu takes over from the left of the row while filter
+-- pills are on: Back (a folder of Files, or an open group) and Add collection.
+-- Empty when no pill is showing (the buttons are on the row then).
+function KoboldMyBooks:movedItems()
+    local items = {}
+    if #self:filterPills() == 0 then return items end
+    for _i, spec in ipairs(self:leftSpecs()) do
+        if spec.back then
+            items[#items + 1] = { text = _("Back"), icon = { "arrow-left", "chevron-left" }, action = spec.action }
+        elseif spec.add then
+            items[#items + 1] = { text = spec.label, icon = { "square-plus", "plus" }, action = spec.action }
+        end
+    end
+    return items
+end
+
+-- The pills for the current view, left to right. Records each pill's tap
+-- rectangle and action.
+function KoboldMyBooks:buildPills()
+    local L = self.L
+    local icon_size = Screen:scaleBySize(18)
+    local specs = self:leftSpecs()
+    local filter_pills = self:filterPills()
+    if #filter_pills > 0 then
+        -- The black pills take the place of the grey one, which is in More.
+        specs = {}
+        for _i, f in ipairs(filter_pills) do
+            specs[#specs + 1] = { label = f.label, filter = true, action = f.action }
+        end
+    end
+    -- Room the icons on the right take (adjust, more, a plus, the page
+    -- indicator), so the black pills stop before them.
+    local right_icons = 2 + ((self:inCollection() or self.tab == "files") and 1 or 0)
+    local reserved = right_icons * (Screen:scaleBySize(26) + Screen:scaleBySize(14))
+        + Screen:scaleBySize(6) + Screen:scaleBySize(70)
+    local limit = L.margin + L.content_w - reserved
 
     local row = HorizontalGroup:new{ align = "center" }
     local x = L.margin
     self.pill_hits, self.pill_actions = {}, {}
     for i, spec in ipairs(specs) do
         local pill, w
-        if spec.plain then
+        if spec.filter then
+            -- Black pill: tap to turn the filter off. The ones that do not
+            -- fit are gathered in a "+N" pill that opens the sheet.
+            pill, w = self:buildPill(spec.label, nil, false, math.floor(L.content_w / 2), true)
+            if x + w > limit and i > 1 then
+                local left = #specs - i + 1
+                pill, w = self:buildPill("+" .. left, nil, false, nil, true)
+                spec.action = function() self:showViewDialog() end
+                specs[i + 1] = nil  -- the rest is in the "+N"
+            end
+        elseif spec.plain then
             pill, w = self:buildPill(spec.label,
                 KoboldWidgets.icon("home", icon_size, { fallback = "appbar.filebrowser" }), true,
                 L.content_w - 2 * L.pill_pad - icon_size - Screen:scaleBySize(6))
@@ -1022,9 +1134,12 @@ end
 
 -- The More button. On Files it opens a menu with Select, Paste here (when
 -- the clipboard holds something) and, last, Settings; inside a collection,
--- Select and Settings; on the other tabs, Refresh library and Settings.
+-- Select and Settings; on the other tabs, Refresh library and Settings. While
+-- filter pills are on, the menu starts with the buttons that left the row for
+-- them (Back, Add collection; see movedItems).
 function KoboldMyBooks:openMoreMenu(rect)
     local function settings() require("kobold.ui.settings").show() end
+    local moved = self:movedItems()
     if self:inCollection() then
         -- Inside a collection: Select (to remove several books at once), Settings.
         local items = {
@@ -1035,6 +1150,7 @@ function KoboldMyBooks:openMoreMenu(rect)
               end },
             { text = _("Settings"), icon = { "settings", "settings-2" }, action = settings },
         }
+        for i, it in ipairs(moved) do table.insert(items, i, it) end
         require("kobold.ui.book_menu").show{ screen = self, anchor = rect, align = "right", items = items }
         return
     end
@@ -1042,6 +1158,7 @@ function KoboldMyBooks:openMoreMenu(rect)
         -- Books, Authors, Series, Genres and the list of collections (and
         -- Uncollected, which also has Select, to add several books to collections).
         local items = {}
+        for _i, it in ipairs(moved) do items[#items + 1] = it end
         if self:inUncollected() then
             items[#items + 1] = { text = _("Select"), icon = { "crop", "square-dot" },
                 action = function()
@@ -1056,6 +1173,7 @@ function KoboldMyBooks:openMoreMenu(rect)
         return
     end
     local items = {}
+    for _i, it in ipairs(moved) do items[#items + 1] = it end
     -- Select only exists while the clipboard is empty: with a pending copy /
     -- move, clear it (or paste) first.
     if not Clipboard.hasBoard() then
@@ -1321,10 +1439,12 @@ end
 -- Message shown when the current view has nothing to list.
 function KoboldMyBooks:emptyText()
     if self.tab == "files" then return _("This folder is empty.") end
+    local filtering = KoboldMyBooksData.isFiltering(self:filters())
     if self.tab == "books" then
-        if self.filter == "all" and not self.lang then return _("No books found in your home folder.") end
+        if not filtering then return _("No books found in your home folder.") end
         return _("No books match this filter.")
     end
+    if filtering then return _("No books match this filter.") end
     if self.group then return _("No books here.") end
     if self.tab == "authors" then return _("No authors found.") end
     if self.tab == "series" then return _("No series found.") end
@@ -1851,48 +1971,54 @@ function KoboldMyBooks:setChoice(field, key, id)
     self[field] = id
     saveChoice(key, id)
     self.page = 1
+    if self.group and (field == "filter" or field == "lang" or field == "kind") then
+        -- The open author / series / collection shows only what passes the filters.
+        self.group = self:findGroup(self.tab, self.group.key) or self.group
+    end
     self:applyList()
     self:refresh()
 end
 
 -- The adjust button: the same View sheet as Home. The Books tab has all of it;
 -- the Authors, Series and Collections lists have Grid / List and A-Z / Z-A;
--- inside a group only Grid / List.
+-- inside a group only Grid / List. Status, Type and Language narrow the books
+-- of every tab but Files (see filtersApply); what is chosen shows as black
+-- pills under the tabs.
 function KoboldMyBooks:showViewDialog()
     local layout = {
         selected = self.view,
         on_pick = function(id) self:setChoice("view", VIEW_KEY, id) end,
     }
-    if self.tab == "books" then
-        ViewSheet.show{
-            layout = layout,
-            -- no status chosen is the filter "all"
-            status = {
-                selected = (self.filter ~= "all") and self.filter or nil,
-                on_pick = function(id) self:setChoice("filter", FILTER_KEY, id or "all") end,
-            },
-            sort   = { selected = self.sort,   on_pick = function(id) self:setChoice("sort", SORT_KEY, id) end },
-            alpha  = { selected = self.alpha,  on_pick = function(id) self:setChoice("alpha", ALPHA_KEY, id) end },
-            lang   = {
-                list = BookLang.languages(self.books), selected = self.lang,
-                on_pick = function(id) self:setChoice("lang", LANG_KEY, id) end,
-            },
+    local o = { layout = layout }
+    if self:filtersApply() then
+        -- no status chosen is the filter "all"
+        o.status = {
+            selected = (self.filter ~= "all") and self.filter or nil,
+            on_pick = function(id) self:setChoice("filter", FILTER_KEY, id or "all") end,
         }
-    elseif self:showsGroups() then
-        ViewSheet.show{
-            layout = layout,
-            -- the lists always have an order: A-Z unless Z-A is chosen
-            alpha = {
-                selected = (self.group_sort == "name_desc") and "za" or "az",
-                toggle = false,
-                on_pick = function(id)
-                    self:setChoice("group_sort", GROUP_SORT_KEY, (id == "za") and "name_desc" or "name_asc")
-                end,
-            },
+        o.kind = {
+            list = BookType.available(self.books), selected = self.kind,
+            on_pick = function(id) self:setChoice("kind", TYPE_KEY, id) end,
         }
-    else
-        ViewSheet.show{ layout = layout }
+        o.lang = {
+            list = BookLang.languages(self.books), selected = self.lang,
+            on_pick = function(id) self:setChoice("lang", LANG_KEY, id) end,
+        }
     end
+    if self.tab == "books" then
+        o.sort  = { selected = self.sort,  on_pick = function(id) self:setChoice("sort", SORT_KEY, id) end }
+        o.alpha = { selected = self.alpha, on_pick = function(id) self:setChoice("alpha", ALPHA_KEY, id) end }
+    elseif self:showsGroups() then
+        -- the lists always have an order: A-Z unless Z-A is chosen
+        o.alpha = {
+            selected = (self.group_sort == "name_desc") and "za" or "az",
+            toggle = false,
+            on_pick = function(id)
+                self:setChoice("group_sort", GROUP_SORT_KEY, (id == "za") and "name_desc" or "name_asc")
+            end,
+        }
+    end
+    ViewSheet.show(o)
 end
 
 -- `need`: the file browser is really needed (the book menu): with a book
@@ -2004,9 +2130,7 @@ function KoboldMyBooks:reload()
     if self.group then
         local key = self.group.key
         self.group = nil
-        for _i, g in ipairs(KoboldMyBooksData.getGroups(self.books, self.tab)) do
-            if g.key == key then self.group = g break end
-        end
+        self.group = self:findGroup(self.tab, key)
         if not self.group then self.page = self.group_page or 1 end
     end
     self:applyList()

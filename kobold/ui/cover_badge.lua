@@ -7,8 +7,8 @@
 --     a book that is On hold shows a pause icon (icons/pause.svg) in the same
 --     ribbon instead of the number;
 --   * optionally a "more" button in the bottom right corner (Library only);
---   * while a book opens, an "Opening" pill along the bottom of its cover,
---     in the same black pill style as "Read" (it covers the "more" button);
+--   * while a book opens, an "Opening" bar along the foot of its cover, flush
+--     with the cover's edges and its bottom corners (it covers the "more" button);
 --   * the same black pill, on its own, for the "Closing" message and under
 --     the cover splash (CoverBadge.pill).
 --
@@ -35,6 +35,7 @@ local UIManager      = require("ui/uimanager")
 local Widget         = require("ui/widget/widget")
 local _              = require("kobold.i18n")
 local KoboldWidgets  = require("kobold.ui.widgets")
+local Rounded        = require("kobold.ui.rounded")
 
 local Screen = Device.screen
 local BLACK, WHITE = Blitbuffer.COLOR_BLACK, Blitbuffer.COLOR_WHITE
@@ -224,18 +225,23 @@ function CoverBadge.clearOpening(screen, refresh)
     end
 end
 
--- The "Opening" pill along the bottom of the cover, as wide as the cover
--- (less the inset); on a small cover the text gets smaller to fit.
+-- "Opening" on a cover: a black bar along the foot of the cover, as wide as
+-- the cover and flush with its edges, with a straight top and the two bottom
+-- corners rounded like the cover's own, so it looks like part of the cover.
+-- On a small cover the text gets smaller to fit.
 function CoverBadge.Overlay:paintOpening(bb, x, y)
-    local r, inset = self.rect, CoverBadge.inset()
+    local r = self.rect
     if not self.opening_pill then
-        local avail = r.w - 2 * inset
-        self.opening_pill = CoverBadge.pill(_("Opening"), avail, avail, 13)
+        self.opening_pill = CoverBadge.pill(_("Opening"), nil, r.w - 2 * CoverBadge.inset(), 13)
     end
-    local ps = self.opening_pill:getSize()
-    self.opening_pill:paintTo(bb,
-        x + r.x + math.floor((r.w - ps.w) / 2),
-        y + r.y + r.h - ps.h - inset)
+    local label = self.opening_pill.label
+    local ts = label:getSize()
+    local bar_h = ts.h + 2 * Screen:scaleBySize(5)
+    local bx, by = x + r.x, y + r.y + r.h - bar_h
+    local radius = Rounded.enabled() and Rounded.radiusFor(r.w, r.h) or 0
+    local ok = pcall(Rounded.fillBottomBar, bb, bx, by, r.w, bar_h, radius, BLACK)
+    if not ok then bb:paintRect(bx, by, r.w, bar_h, BLACK) end
+    label:paintTo(bb, bx + math.floor((r.w - ts.w) / 2), by + math.floor((bar_h - ts.h) / 2))
 end
 
 function CoverBadge.Overlay:getSize() return Geom:new{ w = self.w, h = self.h } end

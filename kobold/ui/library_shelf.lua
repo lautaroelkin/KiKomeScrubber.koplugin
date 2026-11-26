@@ -55,6 +55,7 @@ local Chips           = require("kobold.data.chips")
 local CustomActions   = require("kobold.data.custom_actions")
 local ActionIcon      = require("kobold.ui.action_icon")
 local BookLang        = require("kobold.data.booklang")
+local BookType        = require("kobold.data.booktype")
 local Genres          = require("kobold.data.genres")
 local KoboldBookInfo  = require("kobold.data.bookinfo")
 local MyBooksData     = require("kobold.data.mybooks")
@@ -395,7 +396,8 @@ function LibraryShelf:init()
     if st.view and not st.views then self.views[self.tab] = st.view end      -- older saved state
     -- Alphabetical order (az / za), language and reading status filters, also
     -- kept per chip.
-    self.alphas, self.langs, self.statuses = {}, {}, {}
+    self.alphas, self.langs, self.statuses, self.kinds = {}, {}, {}, {}
+    for k, v in pairs(st.kinds or {}) do self.kinds[k] = v end
     for k, v in pairs(st.statuses or {}) do self.statuses[k] = v end
     for k, v in pairs(st.alphas or {}) do self.alphas[k] = v end
     for k, v in pairs(st.langs or {}) do self.langs[k] = v end
@@ -444,7 +446,7 @@ end
 function LibraryShelf:getState()
     return {
         tab = self.tab, views = self.views, alphas = self.alphas, langs = self.langs,
-        statuses = self.statuses,
+        statuses = self.statuses, kinds = self.kinds,
         page = self.page, path = self.path,
         drill = self.drill and { kind = self.drill.kind, name = self.drill.name } or nil,
     }
@@ -657,13 +659,14 @@ end
 -- True when a book passes the language and reading status filters.
 function LibraryShelf:keepFile(file)
     if self.lang and BookLang.of(file) ~= self.lang then return false end
+    if self.kind and BookType.of(file) ~= self.kind then return false end
     if self.status and MyBooksData.statusOf(file) ~= self.status then return false end
     return true
 end
 
 -- Keeps only the books that pass the filters (all of them when none is on).
 function LibraryShelf:filtered(files)
-    if not (self.lang or self.status) then return files end
+    if not (self.lang or self.status or self.kind) then return files end
     local out = {}
     for _i, file in ipairs(files) do
         if self:keepFile(file) then out[#out + 1] = file end
@@ -674,6 +677,12 @@ end
 -- The distinct languages of the library, sorted (e.g. { "EN", "ES" }).
 function LibraryShelf:languages()
     return BookLang.languages(self.files)
+end
+
+-- The kinds of file the library has (books, graphic novels, documents), for
+-- the Type filter.
+function LibraryShelf:kindsOfFiles()
+    return BookType.available(self.files)
 end
 
 -- The four views (Recent, Oldest, Newest added, Oldest added), applied to any
@@ -727,7 +736,7 @@ end
 -- Books inside a folder, series, author or collection: with no view picked
 -- they keep their own order; with one, all of them are re-sorted.
 function LibraryShelf:ordered(files)
-    if not (self.view or self.alpha or self.lang or self.status) then return files end
+    if not (self.view or self.alpha or self.lang or self.status or self.kind) then return files end
     return self:viewFiles(files, true)
 end
 
@@ -740,7 +749,7 @@ function LibraryShelf:viewGroups(groups)
     -- passes it.
     for _i, g in ipairs(groups) do
         local keep = true
-        if self.lang or self.status then
+        if self.lang or self.status or self.kind then
             keep = false
             for _j, file in ipairs(g.files) do
                 if self:keepFile(file) then keep = true; break end
@@ -935,6 +944,7 @@ function LibraryShelf:syncView()
     self.alpha = self.alphas[key]
     self.lang  = self.langs[key]
     self.status = self.statuses[key]
+    self.kind  = self.kinds[key]
 end
 
 function LibraryShelf:setView(id)
@@ -951,6 +961,12 @@ end
 
 function LibraryShelf:setLang(id)
     self.langs[self:locKey()] = id
+    self.page = 1
+    self:rebuild()
+end
+
+function LibraryShelf:setKind(id)
+    self.kinds[self:locKey()] = id  -- nil (the chosen one tapped again): every type
     self.page = 1
     self:rebuild()
 end
@@ -1023,6 +1039,7 @@ function LibraryShelf:openLayoutMenu(_anchor)
             end,
         },
         status = { selected = self.status, on_pick = function(id) self:setStatus(id) end },
+        kind   = { list = self:kindsOfFiles(), selected = self.kind, on_pick = function(id) self:setKind(id) end },
         sort   = { selected = self.view,  on_pick = function(id) self:setView(id) end },
         alpha  = { selected = self.alpha, on_pick = function(id) self:setAlpha(id) end },
         lang   = {
@@ -1788,7 +1805,9 @@ function LibraryShelf:buildList(entries, avail)
     local min_row    = min_thumb + 2 * math.floor(min_thumb * 0.08)
     local rows = math.floor((avail + line_h) / (base_row + line_h) + 0.5)
     rows = math.min(rows, math.floor((avail + line_h) / (min_row + line_h)))
-    rows = math.max(1, rows)
+    -- At least three rows always: if the page is short, the covers shrink below
+    -- the usual minimum and the rows turn compact (see `compact`).
+    rows = math.max(3, rows)
     local row_target = math.floor((avail + line_h) / rows) - line_h
     local thumb_h  = math.floor(row_target / 1.16)
     local margin   = math.floor((row_target - thumb_h) / 2)
@@ -1797,10 +1816,11 @@ function LibraryShelf:buildList(entries, avail)
     local col_w    = math.max(book_w, card_w)
     local row_h    = thumb_h + 2 * margin
     local text_gap = math.floor(thumb_h * 0.15)
+    local compact  = thumb_h < min_thumb   -- the title does not get a second line
     local text_w   = self.width - col_w - text_gap
     local arrow_w  = U(36)                       -- room for the arrow on folder rows
     local card_text_w = text_w - arrow_w
-    local gap      = U(4)
+    local gap      = compact and U(2) or U(4)
 
     self.total_pages = math.max(1, math.ceil(#entries / rows))
     if self.page > self.total_pages then self.page = self.total_pages end
@@ -1815,7 +1835,7 @@ function LibraryShelf:buildList(entries, avail)
     local function titleWidget(text, w)
         return TextBoxWidget:new{
             text = text, face = title_face, bold = true, width = w or text_w,
-            height = 2 * tline_h, height_adjust = true, height_overflow_show_ellipsis = true,
+            height = (compact and 1 or 2) * tline_h, height_adjust = true, height_overflow_show_ellipsis = true,
         }
     end
     -- `secondary`: the text is in the secondary font (authors, "N books").

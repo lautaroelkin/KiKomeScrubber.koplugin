@@ -7,16 +7,18 @@
 --   ViewSheet.show{
 --       layout = { selected = "grid", on_pick = function(id) end },
 --       status = { selected = nil,    on_pick = function(id) end },  -- id or nil
+--       kind   = { list = { "book", "document" }, selected = nil, on_pick = function(id) end },
 --       sort   = { selected = nil,    on_pick = function(id) end },  -- id or nil
 --       alpha  = { selected = nil,    on_pick = function(id) end, toggle = true },
 --       lang   = { list = { "EN", "ES" }, selected = nil, on_pick = function(id) end },
 --   }
 --
--- status, sort, alpha and lang are toggles: tapping the chosen one again clears
+-- status, kind, sort, alpha and lang are toggles: tapping the chosen one again clears
 -- it (on_pick gets nil). With no status chosen, every book shows.
 
 local _ = require("kobold.i18n")
 local OptionSheet = require("kobold.ui.option_sheet")
+local BookType = require("kobold.data.booktype")
 
 local ViewSheet = {}
 
@@ -60,7 +62,7 @@ function ViewSheet.show(o)
     end
     -- With a View part, Sort & Filter is a second section under it; on its own
     -- it is the sheet's title (no empty "View" above it).
-    if o.layout and (o.status or o.sort or o.alpha or o.lang) then
+    if o.layout and (o.status or o.kind or o.sort or o.alpha or o.lang) then
         rows[#rows + 1] = { heading = _("Sort & Filter") }
     end
     if o.status then
@@ -68,6 +70,24 @@ function ViewSheet.show(o)
             label = _("Status"), options = statusOptions(),
             selected = o.status.selected, toggle = true, on_pick = o.status.on_pick,
         }
+    end
+    if o.kind then
+        local list = {}
+        local has_selected = false
+        for _i, id in ipairs(o.kind.list or {}) do
+            list[#list + 1] = { id = id, label = BookType.label(id) }
+            if id == o.kind.selected then has_selected = true end
+        end
+        -- A type that is chosen stays on the sheet, so it can be cleared.
+        if o.kind.selected and not has_selected then
+            list[#list + 1] = { id = o.kind.selected, label = BookType.label(o.kind.selected) }
+        end
+        if #list > 1 or o.kind.selected then
+            rows[#rows + 1] = {
+                label = _("Type"), options = list,
+                selected = o.kind.selected, toggle = true, on_pick = o.kind.on_pick,
+            }
+        end
     end
     if o.sort then
         rows[#rows + 1] = {

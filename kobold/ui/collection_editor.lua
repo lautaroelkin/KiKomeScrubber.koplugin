@@ -44,6 +44,7 @@ local VerticalGroup   = require("ui/widget/verticalgroup")
 local VerticalSpan    = require("ui/widget/verticalspan")
 local _               = require("kobold.i18n")
 local BookLang        = require("kobold.data.booklang")
+local BookType        = require("kobold.data.booktype")
 local CoverBadge      = require("kobold.ui.cover_badge")
 local KoboldCovers    = require("kobold.data.covers")
 local Keyboard        = require("kobold.ui.keyboard")
@@ -119,7 +120,7 @@ function Editor:init()
     self.selected = {}
     self.all_books = self.books or {}
     -- The order and filters of the list (see ViewSheet): A-Z until changed.
-    self.sort, self.alpha, self.status, self.lang = nil, "az", nil, nil
+    self.sort, self.alpha, self.status, self.lang, self.kind = nil, "az", nil, nil, nil
     -- The keyboard types into whichever field has the focus.
     self.kb = Keyboard.new{
         on_insert = function(text) self:insert(text) end,
@@ -199,8 +200,7 @@ function Editor:applyView()
         end
         list = found
     end
-    list = KoboldMyBooksData.filter(list, self.status or "all")
-    list = KoboldMyBooksData.byLanguage(list, self.lang)
+    list = KoboldMyBooksData.matching(list, { status = self.status, lang = self.lang, kind = self.kind })
     self.books_shown = KoboldMyBooksData.arrange(list, self.sort, self.alpha)
     self.page = 1
 end
@@ -272,14 +272,13 @@ function Editor:fieldIsEmpty()
     return (self.query or "") == ""
 end
 
--- Delete held down: the whole field.
+-- Delete held down: everything to the left of the caret (what is on its right
+-- stays).
 function Editor:clearField()
-    if self.focus == "name" then
-        self.coll_name = ""
-    elseif self.focus == "search" then
-        self.query = nil
-    end
-    self.pos = nil
+    if self.focus ~= "name" and self.focus ~= "search" then return end
+    local text, pos = self:fieldText(), self:caretPos()
+    self:setFieldText(text:sub(pos + 1))
+    self.pos = 0
 end
 
 -- Focus moves to the name, the search, or nowhere (the keyboard goes down).
@@ -694,6 +693,7 @@ function Editor:showAdjust()
     end
     ViewSheet.show{
         status = { selected = self.status, on_pick = function(id) apply("status", id) end },
+        kind   = { list = BookType.available(self.all_books), selected = self.kind, on_pick = function(id) apply("kind", id) end },
         sort   = { selected = self.sort,   on_pick = function(id) apply("sort", id) end },
         alpha  = { selected = self.alpha,  on_pick = function(id) apply("alpha", id) end },
         lang   = {

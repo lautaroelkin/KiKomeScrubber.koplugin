@@ -2,7 +2,7 @@
 -- A small on-screen keyboard drawn by the plugin, to type text inside any
 -- KiKome screen without KOReader's own dialogs. Letters (with ñ and an accent
 -- key: tap ´ and then a vowel), numbers and punctuation, shift, a delete key
--- (hold it to clear everything) and a key that hides the keyboard.
+-- (hold it to delete everything to the left of the caret) and a key that hides the keyboard.
 --
 -- The screen that owns it only places it and passes it the taps:
 --
@@ -10,7 +10,7 @@
 --   local kb = Keyboard.new{
 --       on_insert = function(text) end,   -- a character was typed
 --       on_delete = function() end,       -- delete: the last character
---       on_clear  = function() end,       -- delete held down: everything
+--       on_clear  = function() end,       -- delete held down: everything left of the caret
 --       on_hide   = function() end,       -- the hide key
 --       on_move   = function(delta) end,  -- optional: the finger slid over the space bar;
 --                                         -- move the caret `delta` letters (negative: left).
@@ -437,7 +437,7 @@ function Keyboard:swipe(ges, y0)
     return false, false, false
 end
 
--- A long press: on the delete key it clears everything. On the space bar it
+-- A long press: on the delete key it clears everything left of the caret. On the space bar it
 -- does nothing here (that is where the caret slide starts, see pan). On any
 -- other key it is a tap that took a little too long, so it types anyway
 -- instead of being lost. Returns the same as tap.

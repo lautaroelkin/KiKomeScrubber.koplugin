@@ -2334,7 +2334,11 @@ function KoboldBookDetails:openEditor(opts)
                 st.num.value = ""
                 return
             end
-            st.value, st.pos = "", 0
+            -- everything to the left of the caret goes; what is on its right stays
+            -- (keywords always type at the end, so there it clears the whole word)
+            if st.chips then st.pos = #st.value end
+            local pos = math.max(0, math.min(st.pos or #st.value, #st.value))
+            st.value, st.pos = st.value:sub(pos + 1), 0
         end,
         -- sliding over the space bar moves the caret (not in the number box,
         -- and not for keywords, where typing always goes to the end)

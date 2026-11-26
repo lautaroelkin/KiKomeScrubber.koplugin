@@ -162,37 +162,173 @@ function KoboldWidgets.makeCover(file, w, h, opts)
             image,
         }
     end
-    -- Sized by its content: inner box + padding + border = exactly w x h.
-    local pad = Screen:scaleBySize(8)
-    local border = KoboldWidgets.outlineWidth(opts)
-    local inner_w = w - 2 * (pad + border)
-    local inner_h = h - 2 * (pad + border)
-    local inner
-    -- The title only goes on when it has room. On a small cover (the mini one in
-    -- the nav bar, the stacks of a folder) it would break into single letters
-    -- and spill out, so there the placeholder is a plain block.
-    if inner_w >= Screen:scaleBySize(60) and inner_h >= Screen:scaleBySize(40) then
-        inner = CenterContainer:new{
-            dimen = Geom:new{ w = inner_w, h = inner_h },
-            TextBoxWidget:new{
-                text = KoboldWidgets.bookTitle(file),
-                face = KoboldWidgets.face(12),
-                width = inner_w,
-                alignment = "center",
-                -- never taller than the cover: what does not fit ends in "..."
-                height = inner_h,
-                height_adjust = true,
-                height_overflow_show_ellipsis = true,
-            },
-        }
-    else
-        inner = KoboldWidgets.fixed(math.max(1, inner_w), math.max(1, inner_h), HorizontalSpan:new{ width = 0 })
-    end
-    return FrameContainer:new{
+    local ok, cover = pcall(KoboldWidgets.titleCover, file, w, h, opts)
+    if ok and cover then return cover end
+    -- Whatever went wrong drawing the title, the book still gets its plate.
+    local okl, logger = pcall(require, "logger")
+    if okl and logger then logger.warn("KiKome: cover for " .. tostring(file) .. " failed: " .. tostring(cover)) end
+    return KoboldWidgets.plainPlate(w, h, opts)
+end
+
+-- The plate of a cover with no picture and no text (a thumbnail too small for
+-- a title): white with a black spine down the left, so even a tiny one reads as
+-- a book. Exactly w x h. The grey frame stays when the cover outline is off, or
+-- the plate would vanish into the page.
+function KoboldWidgets.plainPlate(w, h, opts)
+    local border = math.max(KoboldWidgets.outlineWidth(opts), Screen:scaleBySize(1))
+    local inner_w, inner_h = math.max(2, w - 2 * border), math.max(2, h - 2 * border)
+    local spine_w = math.min(math.floor(inner_w / 3), math.max(Screen:scaleBySize(3), math.floor(w * 0.08)))
+    return KoboldWidgets.fixed(w, h, FrameContainer:new{
         bordersize = border,
-        background = Blitbuffer.COLOR_LIGHT_GRAY,
-        padding = pad,
-        inner,
+        color = (KoboldWidgets.outlineWidth(opts) > 0) and Blitbuffer.COLOR_DARK_GRAY or Blitbuffer.COLOR_GRAY,
+        background = Blitbuffer.COLOR_WHITE, padding = 0,
+        HorizontalGroup:new{
+            align = "top",
+            LineWidget:new{ dimen = Geom:new{ w = spine_w, h = inner_h }, background = Blitbuffer.COLOR_BLACK },
+            KoboldWidgets.fixed(inner_w - spine_w, inner_h, HorizontalSpan:new{ width = 0 }),
+        },
+    })
+end
+
+-- The author and title of a book with no cover, as the cover shows them: the
+-- title and author the cover browser read (or the file name, tidied up, when it
+-- has none) and the format. Nothing here reads the book.
+local function plateText(file)
+    local title, author
+    local ok, BookInfo = pcall(require, "kobold.data.bookinfo")
+    if ok and BookInfo then
+        local ok_get, info = pcall(BookInfo.get, file)
+        if ok_get and type(info) == "table" then
+            if type(info.title) == "string" and info.title ~= "" then title = info.title end
+            if type(info.authors) == "string" and info.authors ~= "" then
+                local names = {}
+                for name in info.authors:gmatch("[^\n]+") do
+                    name = name:match("^%s*(.-)%s*$")
+                    if name ~= "" then names[#names + 1] = name end
+                end
+                if #names > 0 then author = table.concat(names, ", ") end
+            end
+        end
+    end
+    if not title then
+        title = (file:match("([^/]+)%.[^%.]+$") or file):gsub("[_]+", " "):gsub("%s+", " ")
+    end
+    if #title > 90 then title = title:sub(1, 87) .. "..." end
+    local ext = (file:match("%.([^%./]+)$") or ""):upper()
+    return title, author, ext
+end
+
+-- The cover of a book that has none, drawn like a real one: white, with a black
+-- spine down the left; the format (EPUB, MD...) in a small black tag at the
+-- top; the title in bold, as large as fits, with a short thick rule under it
+-- in the middle; the author in grey at the foot. The text sizes follow the
+-- cover's size. A small cover (Home's list thumbnails) keeps the spine and the
+-- title; one too small for text is the plain plate. Exactly w x h.
+function KoboldWidgets.titleCover(file, w, h, opts)
+    local border = KoboldWidgets.outlineWidth(opts)
+    local small = w < Screen:scaleBySize(95)
+    local inner_w, inner_h = w - 2 * border, h - 2 * border
+    local spine_w = math.max(Screen:scaleBySize(small and 3 or 5), math.floor(w * 0.07))
+    local pad = math.max(Screen:scaleBySize(small and 4 or 8), math.floor(w * 0.08))
+    local cw = inner_w - spine_w - 2 * pad
+    local ch = inner_h - 2 * pad
+    if cw < Screen:scaleBySize(30) or ch < Screen:scaleBySize(30) then
+        return KoboldWidgets.plainPlate(w, h, opts)
+    end
+
+    local title, author, ext = plateText(file)
+    local gap = Screen:scaleBySize(small and 3 or 7)
+    local unit = math.max(0.5, Screen:scaleBySize(1000) / 1000)  -- pixels of one design unit
+
+    -- Format tag, top left.
+    local tag
+    if ext ~= "" and ch >= Screen:scaleBySize(110) then
+        local label = TextWidget:new{
+            text = ext, face = KoboldWidgets.secondaryFace(9), bold = true,
+            fgcolor = Blitbuffer.COLOR_WHITE, max_width = cw - Screen:scaleBySize(12),
+        }
+        tag = FrameContainer:new{
+            bordersize = 0, margin = 0, radius = Screen:scaleBySize(3),
+            background = Blitbuffer.COLOR_BLACK,
+            padding_left = Screen:scaleBySize(5), padding_right = Screen:scaleBySize(5),
+            padding_top = Screen:scaleBySize(1), padding_bottom = Screen:scaleBySize(1),
+            label,
+        }
+    end
+    -- Author, at the foot, up to two lines.
+    local author_box
+    if author and ch >= Screen:scaleBySize(100) then
+        author_box = TextBoxWidget:new{
+            text = author, face = KoboldWidgets.secondaryFace(math.max(10, math.min(13, math.floor(cw / unit / 9)))),
+            fgcolor = Blitbuffer.COLOR_DARK_GRAY, width = cw, alignment = "left",
+            height = math.floor(ch * 0.2), height_adjust = true, height_overflow_show_ellipsis = true,
+        }
+    end
+    local top_h = tag and (tag:getSize().h + gap) or 0
+    local foot_h = author_box and (author_box:getSize().h + gap) or 0
+
+    -- The title block is centred in what the tag and the author leave: the
+    -- largest title size that fits, down to a floor (past it, cut with "...").
+    local rule_h = Screen:scaleBySize(small and 2 or 3)
+    local reserve = 2 * math.max(top_h, foot_h)
+    local max_title_h = math.max(Screen:scaleBySize(24), ch - reserve - gap - rule_h)
+    local floor_size = small and 8 or 11
+    local start = math.max(floor_size + 1, math.min(24, math.floor(cw / unit / (small and 6 or 7))))
+    local title_box
+    for size = start, floor_size, -1 do
+        local tb = TextBoxWidget:new{
+            text = title, face = KoboldWidgets.face(size), bold = true,
+            width = cw, alignment = "left",
+        }
+        if tb:getSize().h <= max_title_h or size == floor_size then
+            if tb:getSize().h > max_title_h then
+                tb:free()
+                tb = TextBoxWidget:new{
+                    text = title, face = KoboldWidgets.face(floor_size), bold = true,
+                    width = cw, alignment = "left",
+                    height = max_title_h, height_adjust = true,
+                    height_overflow_show_ellipsis = true,
+                }
+            end
+            title_box = tb
+            break
+        end
+        tb:free()
+    end
+
+    local stack = VerticalGroup:new{
+        align = "left",
+        title_box,
+        VerticalSpan:new{ width = gap },
+        LineWidget:new{
+            dimen = Geom:new{ w = math.max(Screen:scaleBySize(16), math.floor(cw * 0.22)), h = rule_h },
+            background = Blitbuffer.COLOR_BLACK,
+        },
+    }
+    local box = OverlapGroup:new{
+        dimen = Geom:new{ w = cw, h = ch },
+        CenterContainer:new{ dimen = Geom:new{ w = cw, h = ch }, stack },
+    }
+    if tag then
+        tag.overlap_offset = { 0, 0 }
+        box[#box + 1] = tag
+    end
+    if author_box then
+        author_box.overlap_offset = { 0, ch - author_box:getSize().h }
+        box[#box + 1] = author_box
+    end
+
+    return FrameContainer:new{
+        bordersize = border, color = Blitbuffer.COLOR_DARK_GRAY,  -- the grey of every cover's outline
+        padding = 0, background = Blitbuffer.COLOR_WHITE,
+        HorizontalGroup:new{
+            align = "top",
+            LineWidget:new{ dimen = Geom:new{ w = spine_w, h = inner_h }, background = Blitbuffer.COLOR_BLACK },
+            FrameContainer:new{
+                bordersize = 0, margin = 0, padding = pad, background = Blitbuffer.COLOR_WHITE,
+                box,
+            },
+        },
     }
 end
 
@@ -737,13 +873,29 @@ local function clockWidget(max_w)
     return group
 end
 
--- Page indicator dots in the center of the status bar (same geometry as Action center).
+-- Top of Home indicator in the center of the status bar, one mark per mode.
+-- Two looks, chosen with STYLE (kept under the name StatusDots, which
+-- statusBar uses):
+--   "pill":     the current mode is a black elongated pill, the others empty rings
+--   "segments": thin bars, the current one thicker and black, the others grey
 local StatusDots = Widget:extend{ count = 2, current = 1 }
+StatusDots.STYLE = "pill"
 
 function StatusDots:init()
-    self.d = Screen:scaleBySize(7)
-    self.gap = Screen:scaleBySize(9)
-    self.dimen = Geom:new{ x = 0, y = 0, w = self.count * self.d + (self.count - 1) * self.gap, h = self.d }
+    if StatusDots.STYLE == "segments" then
+        self.seg_w = Screen:scaleBySize(16)
+        self.gap = Screen:scaleBySize(4)
+        self.thin = math.max(1, Screen:scaleBySize(2))
+        self.thick = math.max(self.thin + 1, Screen:scaleBySize(4))
+        self.dimen = Geom:new{ x = 0, y = 0, w = self.count * self.seg_w + (self.count - 1) * self.gap, h = self.thick }
+    else
+        self.d = Screen:scaleBySize(8)                      -- ring diameter / pill height
+        self.pill_w = math.max(self.d * 2, Screen:scaleBySize(18))
+        self.border = math.max(1, Screen:scaleBySize(1))    -- ring line thickness
+        self.gap = Screen:scaleBySize(7)
+        self.dimen = Geom:new{ x = 0, y = 0,
+            w = (self.count - 1) * (self.d + self.gap) + self.pill_w, h = self.d }
+    end
 end
 
 function StatusDots:getSize()
@@ -752,11 +904,29 @@ end
 
 function StatusDots:paintTo(bb, x, y)
     self.dimen.x, self.dimen.y = x, y
-    local off_color = Blitbuffer.Color8(0xDD)
+    if StatusDots.STYLE == "segments" then
+        local off_color = Blitbuffer.Color8(0x99)
+        for i = 1, self.count do
+            local active = (i == self.current)
+            local h = active and self.thick or self.thin
+            bb:paintRoundedRect(x + (i - 1) * (self.seg_w + self.gap), y + math.floor((self.thick - h) / 2),
+                self.seg_w, h, active and Blitbuffer.COLOR_BLACK or off_color, math.floor(h / 2))
+        end
+        return
+    end
     local r = math.floor(self.d / 2)
+    local cx = x
     for i = 1, self.count do
-        bb:paintRoundedRect(x + (i - 1) * (self.d + self.gap), y, self.d, self.d,
-            (i == self.current) and Blitbuffer.COLOR_BLACK or off_color, r)
+        if i == self.current then
+            bb:paintRoundedRect(cx, y, self.pill_w, self.d, Blitbuffer.COLOR_BLACK, r)
+            cx = cx + self.pill_w + self.gap
+        else
+            bb:paintRoundedRect(cx, y, self.d, self.d, Blitbuffer.COLOR_BLACK, r)
+            local b = self.border
+            bb:paintRoundedRect(cx + b, y + b, self.d - 2 * b, self.d - 2 * b,
+                Blitbuffer.COLOR_WHITE, math.max(0, r - b))
+            cx = cx + self.d + self.gap
+        end
     end
 end
 

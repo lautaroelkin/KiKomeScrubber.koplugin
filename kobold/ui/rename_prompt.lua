@@ -135,7 +135,11 @@ function Prompt:init()
                 self.pos = i - 1
             end
         end,
-        on_clear = function() self.value, self.pos, self.scroll = "", 0, 0 end,
+        -- delete held down: everything to the left of the caret (what is on its right stays)
+        on_clear = function()
+            self.value = self.value:sub(math.min(self.pos, #self.value) + 1)
+            self.pos, self.scroll = 0, 0
+        end,
         -- sliding over the space bar moves the caret
         on_move = function(delta) self.pos = Keyboard.moveCaret(self.value, self.pos, delta) end,
         on_hide = function() self:setKeyboard(false) end,

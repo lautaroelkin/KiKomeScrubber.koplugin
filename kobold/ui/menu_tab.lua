@@ -3,11 +3,11 @@
 -- from the top edge, on Home and inside a book). The other tabs of the menu
 -- stay next to it, so everything else in KOReader is one tap away.
 --
---   [Library] ( ) (#) ( ) ( ) >     inside a book: back to Home; then the actions chosen in
+--   Library  ( ) (#) ( ) ( ) >      inside a book: back to Home (icon + the word, in bold); then the actions chosen in
 --                                   Settings > Your actions > Action center, as round
 --                                   buttons (icons only) that scroll when they do not fit
 --   [ book you are reading: cover, title, author, progress ]     (swipe it to the side:
---   [ the recent books, the one being read left out ]             a second page, with dots)
+--   [ the recent books, the one being read left out ]             a second page, with lines)
 --   [ time left in the chapter ]  [notes]            Hide (sliders icon)
 --
 -- A round button is black with a white icon when what the action toggles is on (night
@@ -17,7 +17,7 @@
 -- every other tab out of the menu (as Zenos' zen mode does) and the button becomes "Show
 -- KOReader menu"; turning the Action center off brings them back. On Home the card has a "Read now" pill and tapping it
 -- opens the book; inside the book there is no pill (you are there), only the facts,
--- and a Library button that goes back to Home (what the menu's File browser tab does,
+-- and a "Library" label (icon + bold word) that goes back to Home (what the menu's File browser tab does,
 -- which KiKome makes instant).
 --
 -- It is off until it is turned on in Settings. KOReader's TouchMenu only knows
@@ -180,7 +180,7 @@ function Strip:init()
     local ActionIcon = require("kobold.ui.action_icon")
     local OptionSheet = require("kobold.ui.option_sheet")
     self.widgets = {}
-    self.d = U(46)
+    self.d = U(38)      -- diameter of a round button (it sets the height of the row)
     self.gap = U(10)
     self.chev = U(26)   -- the room of a chevron
     self.cells = {}
@@ -388,20 +388,32 @@ function Recents:free()
     self.widgets = {}
 end
 
--- Two dots in the footer next to KOReader's close chevron: which of the two pages is active.
+-- Horizontal lines in the footer next to KOReader's close chevron, one per page: the
+-- active page is a longer, thicker black line, the others short thin grey ones.
+-- (Kept under the name Dots: the footer code below uses it.)
+local C_OFF = Blitbuffer.Color8(0x99)   -- grey of the lines of the pages that are not shown
 local Dots = Widget:extend{ count = 2, current = 1 }
 
 function Dots:init()
-    self.d = U(7)
-    self.gap = U(9)
-    self.dimen = Geom:new{ x = 0, y = 0, w = self.count * self.d + (self.count - 1) * self.gap, h = self.d }
+    self.short_w = U(12)
+    self.long_w = U(32)
+    self.gap = U(7)
+    self.thin = math.max(2, U(3))
+    self.thick = math.max(self.thin + 1, U(5))
+    self.dimen = Geom:new{ x = 0, y = 0,
+        w = (self.count - 1) * (self.short_w + self.gap) + self.long_w, h = self.thick }
 end
 
 function Dots:paintTo(bb, x, y)
     self.dimen.x, self.dimen.y = x, y
+    local cx = x
     for i = 1, self.count do
-        bb:paintRoundedRect(x + (i - 1) * (self.d + self.gap), y, self.d, self.d,
-            (i == self.current) and BLACK or C_TAG, math.floor(self.d / 2))
+        local active = (i == self.current)
+        local w = active and self.long_w or self.short_w
+        local h = active and self.thick or self.thin
+        bb:paintRoundedRect(cx, y + math.floor((self.thick - h) / 2), w, h,
+            active and BLACK or C_OFF, math.floor(h / 2))
+        cx = cx + w + self.gap
     end
 end
 
@@ -446,24 +458,30 @@ local function inside(rect, pos)
     return pos.x >= rect.x and pos.x < rect.x + rect.w and pos.y >= rect.y and pos.y < rect.y + rect.h
 end
 
--- The "Library" button, inside a book: a grey pill with the library icon and the word.
+-- The "Library" label, inside a book: the library icon and the word in bold, with no
+-- pill behind them; tapping it goes back to Home. Its width is the one the old pill
+-- had (icon + word at size 15 + 18 of padding on each side), so the round buttons
+-- at its right stay exactly where they were, even with the word a little bigger.
 local function buildLibraryButton(h)
     local KoboldWidgets = require("kobold.ui.widgets")
     local OptionSheet = require("kobold.ui.option_sheet")
     local _ = require("kobold.i18n")
-    local CenterContainer = require("ui/widget/container/centercontainer")
+    local LeftContainer = require("ui/widget/container/leftcontainer")
     local HorizontalGroup = require("ui/widget/horizontalgroup")
     local HorizontalSpan = require("ui/widget/horizontalspan")
+    local old_label = TextWidget:new{ text = _("Library"), face = KoboldWidgets.face(15), bold = true }
+    local w = U(18) + U(8) + old_label:getSize().w + 2 * U(18)
+    old_label:free()
     local content = HorizontalGroup:new{
         align = "center",
-        OptionSheet.iconWidget("my-books", U(18), BLACK),
+        OptionSheet.iconWidget("my-books", U(23), BLACK),
         HorizontalSpan:new{ width = U(8) },
-        TextWidget:new{ text = _("Library"), face = KoboldWidgets.face(15), bold = true },
+        TextWidget:new{ text = _("Library"), face = KoboldWidgets.face(16), bold = true },
     }
-    local w = content:getSize().w + 2 * U(18)
+    w = math.max(w, content:getSize().w)
     return FrameContainer:new{
-        bordersize = 0, padding = 0, margin = 0, radius = math.floor(h / 2), background = C_TAG,
-        CenterContainer:new{ dimen = Geom:new{ w = w, h = h }, content },
+        bordersize = 0, padding = 0, margin = 0,
+        LeftContainer:new{ dimen = Geom:new{ w = w, h = h }, content },
     }, w
 end
 
@@ -484,11 +502,11 @@ function MenuTab.buildPanel(touch_menu, ui)
     local inner = W - 2 * pad
     local refs = { ui = ui }
     local group = VerticalGroup:new{ align = "left" }
-    group[#group + 1] = VerticalSpan:new{ width = U(16) }
+    group[#group + 1] = VerticalSpan:new{ width = U(11) }
 
     -- The first row: the way back to Home (inside a book), then the round buttons.
     local list = entries(ui)
-    local row_h = U(46)
+    local row_h = U(38)
     local lib_frame, lib_w
     if ui and ui.document then
         lib_frame, lib_w = buildLibraryButton(row_h)
@@ -509,7 +527,7 @@ function MenuTab.buildPanel(touch_menu, ui)
             row[#row + 1] = refs.strip
         end
         group[#group + 1] = row
-        group[#group + 1] = VerticalSpan:new{ width = U(18) }
+        group[#group + 1] = VerticalSpan:new{ width = U(12) }
     end
     if #list == 0 and not lib_frame then
         local KoboldWidgets = require("kobold.ui.widgets")

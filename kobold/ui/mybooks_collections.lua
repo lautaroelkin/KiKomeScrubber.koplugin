@@ -440,10 +440,7 @@ end
 -- Collections tab, with the back pill returning to the list.
 function Methods:openCollection(name)
     self.group_page = self.page
-    self.group = nil
-    for _i, g in ipairs(KoboldMyBooksData.getGroups(self.books, "collections")) do
-        if g.key == name then self.group = g break end
-    end
+    self.group = self:findGroup("collections", name)
     self.page = 1
     self:applyList()
     self:refresh()
