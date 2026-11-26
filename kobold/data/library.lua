@@ -11,6 +11,10 @@ local BOOK_EXTENSIONS = {
     epub = true, pdf = true, mobi = true, azw = true, azw3 = true,
     fb2 = true, cbz = true, cbr = true, djvu = true, txt = true,
     rtf = true, htm = true, html = true,
+    -- Other formats KOReader opens: Markdown, Word, XHTML, CHM, Palm books,
+    -- XPS and the like. They count as books of the library like the rest.
+    md = true, doc = true, docx = true, xhtml = true, chm = true,
+    pdb = true, prc = true, xps = true, oxps = true, kepub = true,
 }
 
 local SCAN_MAX_DEPTH = 5
@@ -31,9 +35,29 @@ local library_cache = nil
 
 math.randomseed(os.time())
 
-local function isBookFile(name)
+-- A .zip is not a book by its name: it is one only when KOReader has a reader
+-- for it (a zip of images, read like a CBZ, or a "Name.fb2.zip"). So for .zip
+-- files the library asks KOReader, the same way its own file browser decides,
+-- instead of listing every compressed file. The registry loads on first use.
+local document_registry, registry_tried
+local function koreaderOpens(path)
+    if not registry_tried then
+        registry_tried = true
+        local ok, reg = pcall(require, "document/documentregistry")
+        if ok then document_registry = reg end
+    end
+    if not document_registry then return false end
+    local ok, has = pcall(function() return document_registry:hasProvider(path) end)
+    return ok and has == true
+end
+
+local function isBookFile(name, path)
     local ext = name:match("%.([^%./]+)$")
-    return ext ~= nil and BOOK_EXTENSIONS[ext:lower()] == true
+    if ext == nil then return false end
+    ext = ext:lower()
+    if BOOK_EXTENSIONS[ext] then return true end
+    if ext == "zip" and path then return koreaderOpens(path) end
+    return false
 end
 
 -- True when every sidecar must sit next to its book ("Name.sdr" in the
@@ -95,7 +119,7 @@ function KoboldLibrary.scan()
                         else
                             walk(path, depth + 1)
                         end
-                    elseif attr and attr.mode == "file" and isBookFile(name) then
+                    elseif attr and attr.mode == "file" and isBookFile(name, path) then
                         books[#books + 1] = {
                             file = path,
                             mtime = attr.modification or 0,

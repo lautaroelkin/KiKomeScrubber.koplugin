@@ -9,6 +9,7 @@ local KoboldLibrary   = require("kobold.data.library")
 local KoboldPerf      = require("kobold.data.perf")
 local Chips             = require("kobold.data.chips")
 local BookLang          = require("kobold.data.booklang")
+local BookType          = require("kobold.data.booktype")
 local Genres            = require("kobold.data.genres")
 local _               = require("kobold.i18n")
 
@@ -205,6 +206,43 @@ function KoboldMyBooksData.filter(books, filter)
     local out = {}
     for _i, b in ipairs(books) do
         if b.status == filter then out[#out + 1] = b end
+    end
+    return out
+end
+
+-- True when `f` (the filters: status, lang, kind, each optional) narrows
+-- anything. A status of "all" is none.
+function KoboldMyBooksData.isFiltering(f)
+    return f ~= nil and ((f.status ~= nil and f.status ~= "all") or f.lang ~= nil or f.kind ~= nil)
+end
+
+-- Entries of `books` that pass every filter of `f` ({ status, lang, kind }, each
+-- optional), in the same order. The cheap checks (type, language) go first, so
+-- the sidecars are only read for the books that are left.
+function KoboldMyBooksData.matching(books, f)
+    if not KoboldMyBooksData.isFiltering(f) then return books end
+    local list = books
+    if f.kind then
+        local out = {}
+        for _i, b in ipairs(list) do
+            if BookType.of(b.file) == f.kind then out[#out + 1] = b end
+        end
+        list = out
+    end
+    list = KoboldMyBooksData.byLanguage(list, f.lang)
+    return KoboldMyBooksData.filter(list, f.status or "all")
+end
+
+-- `groups` (from getGroups) with the books of each narrowed by `f`. While a
+-- filter is on, a group left with no books goes from the list, except the one
+-- with key `keep_key` (the group that is open). Without a filter, `groups`
+-- comes back as it is.
+function KoboldMyBooksData.filterGroups(groups, f, keep_key)
+    if not KoboldMyBooksData.isFiltering(f) then return groups end
+    local out = {}
+    for _i, g in ipairs(groups) do
+        g.books = KoboldMyBooksData.matching(g.books, f)
+        if #g.books > 0 or g.key == keep_key then out[#out + 1] = g end
     end
     return out
 end
